@@ -1,6 +1,8 @@
 import './style.css';
 import { Game } from './game';
 import { MODES, type ModeId } from './modes';
+import { completed, markCompleted, resetProgress } from './progress';
+import { findLevel, levelsFor } from './tutorials';
 
 const host = document.getElementById('game')!;
 const hudRoot = document.getElementById('hud')!;
@@ -17,8 +19,12 @@ let sawKey = false;
 const proOk = (): boolean => sawKey || finePointer.matches;
 let lastMode: ModeId = proOk() && !matchMedia('(pointer: coarse)').matches ? 'pro' : 'casual';
 
+/** Which menu screen is up: the main one, or a mode's tutorial list. */
+let screen: 'main' | ModeId = 'main';
 const refreshMenu = (): void => {
-  if (!menu.hidden) showMenu();
+  if (menu.hidden) return;
+  if (screen === 'main') showMenu();
+  else showTutorials(screen);
 };
 window.addEventListener(
   'keydown',
@@ -30,10 +36,23 @@ window.addEventListener(
 );
 finePointer.addEventListener('change', refreshMenu);
 
-function showMenu(): void {
+function stopGame(): void {
   game?.destroy();
   game = null;
   menu.hidden = false;
+}
+
+const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+
+function learnButton(mode: ModeId, label: string): string {
+  const all = levelsFor(mode);
+  const done = all.filter((l) => completed(mode).has(l.id)).length;
+  return `<button data-tuts="${mode}">🎓 ${label} <small>${done}/${all.length}${done === all.length ? ' ✓' : ''}</small></button>`;
+}
+
+function showMenu(): void {
+  stopGame();
+  screen = 'main';
   const pro = proOk();
   const rec = (id: ModeId): string => (lastMode === id || !pro ? 'rec' : '');
   menu.innerHTML = `
@@ -53,6 +72,9 @@ function showMenu(): void {
             : ''
         }
       </div>
+      <div class="learn ${pro ? '' : 'single'}">
+        ${pro ? learnButton('casual', 'Casual tutorials') + learnButton('pro', 'Pro tutorials') : learnButton('casual', 'Tutorials')}
+      </div>
       ${pro ? '' : '<p class="pro-note">🖥️ Pro mode needs a keyboard and mouse. Play it on a computer.</p>'}
       <ul class="how">
         <li>💗 <b>Befriend</b> strangers: charming, kind, honest blobs win them over.</li>
@@ -65,17 +87,87 @@ function showMenu(): void {
   menu.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
     b.addEventListener('click', () => void start(b.dataset.mode as ModeId)),
   );
+  menu.querySelectorAll<HTMLButtonElement>('[data-tuts]').forEach((b) =>
+    b.addEventListener('click', () => showTutorials(b.dataset.tuts as ModeId)),
+  );
 }
 
-async function start(id: ModeId): Promise<void> {
+/** The level list for one mode, with ticks for the ones you've finished. */
+function showTutorials(mode: ModeId): void {
+  stopGame();
+  screen = mode;
+  const levels = levelsFor(mode);
+  const done = completed(mode);
+  const upNext = levels.find((l) => !done.has(l.id));
+  const single = !proOk();
+  menu.innerHTML = `
+    <div class="menu-card tuts">
+      <div class="tuts-h">
+        <button data-back title="Back">←</button>
+        <h2>🎓 ${single ? 'Tutorials' : `${MODES[mode].label} tutorials`}</h2>
+        <span class="count">${levels.filter((l) => done.has(l.id)).length}/${levels.length}</span>
+      </div>
+      <p class="tag">Little levels that show one or two ideas each. Play them in any order.</p>
+      <ol class="levels">
+        ${levels
+          .map((l, i) => {
+            const cls = done.has(l.id) ? 'done' : l === upNext ? 'up' : '';
+            return `<li><button data-level="${l.id}" class="${cls}">
+              <span class="n">${done.has(l.id) ? '✓' : i + 1}</span>
+              <span class="ico">${l.icon}</span>
+              <span class="t"><b>${esc(l.title)}</b><small>${esc(l.teaches)}</small></span>
+              <span class="go">${done.has(l.id) ? 'Again' : 'Play ▶'}</span>
+            </button></li>`;
+          })
+          .join('')}
+      </ol>
+      <div class="tuts-foot">
+        <span>${upNext ? '' : '🎉 All done! You’re ready for a real game.'}</span>
+        ${done.size ? '<button data-reset>Clear ticks</button>' : ''}
+      </div>
+    </div>`;
+  menu.querySelector('[data-back]')!.addEventListener('click', showMenu);
+  menu.querySelector('[data-reset]')?.addEventListener('click', () => {
+    resetProgress(mode);
+    showTutorials(mode);
+  });
+  menu.querySelectorAll<HTMLButtonElement>('[data-level]').forEach((b) =>
+    b.addEventListener('click', () => void start(mode, b.dataset.level)),
+  );
+}
+
+async function start(id: ModeId, levelId?: string): Promise<void> {
   game?.destroy();
+  game = null;
   lastMode = id;
   menu.hidden = true;
   const seed = Number(new URLSearchParams(location.search).get('seed')) || Date.now();
-  game = await Game.start(MODES[id], host, hudRoot, { onMenu: showMenu, onRestart: () => void start(id) }, seed);
+  const level = levelId ? findLevel(id, levelId) : undefined;
+  const list = levelsFor(id);
+  const next = level ? (list[list.indexOf(level) + 1] ?? null) : null;
+  game = await Game.start(
+    MODES[id],
+    host,
+    hudRoot,
+    {
+      onMenu: showMenu,
+      onRestart: () => void start(id, level?.id),
+      tutorial: level && {
+        level,
+        next,
+        done: () => markCompleted(id, level.id),
+        onNext: () => void start(id, next?.id),
+        onList: () => showTutorials(id),
+        onPlay: () => void start(id),
+      },
+    },
+    seed,
+  );
   if (import.meta.env.DEV) (window as unknown as { __game: Game }).__game = game;
 }
 
-const param = new URLSearchParams(location.search).get('mode');
-if (param === 'casual' || param === 'pro') void start(param);
+// ?mode=casual|pro skips the menu; add &tut=<level id> to jump into a tutorial.
+const params = new URLSearchParams(location.search);
+const param = params.get('mode');
+if (param === 'casual' || param === 'pro') void start(param, params.get('tut') ?? undefined);
 else showMenu();

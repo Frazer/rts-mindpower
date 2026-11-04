@@ -104,9 +104,12 @@ function findStranger(w: World, b: Blob): boolean {
   return true;
 }
 
+/** Crowds drift, so look a little past the circle that was tapped. */
+const AREA_SLACK = 90;
+
 function befriendInArea(w: World, b: Blob): boolean {
   const a = b.area!;
-  w.grid.query(a.x, a.y, a.r, near);
+  w.grid.query(a.x, a.y, a.r + AREA_SLACK, near);
   let best: Blob | null = null;
   let bd = Infinity;
   for (const t of near) {

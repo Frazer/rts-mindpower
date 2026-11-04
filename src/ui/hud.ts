@@ -16,6 +16,7 @@ import {
 import { NEGATIVE_TRAITS, TRAITS, TRAIT_INFO, talkScore, type TraitKey } from '../sim/traits';
 import type { Blob, Building, BuildingKind, Job } from '../sim/types';
 import type { World } from '../sim/world';
+import type { Progress } from '../tutorials';
 
 export type PanelAction =
   | 'befriend'
@@ -75,6 +76,27 @@ export interface HudHandlers {
   teamAct(act: TeamAct, ids: number[]): void;
 }
 
+/** What the tutorial card shows. */
+export interface TutCard {
+  icon: string;
+  title: string;
+  step: number;
+  steps: number;
+  text: string;
+  sub: string;
+  progress: Progress | null;
+}
+
+export interface TutDone {
+  icon: string;
+  title: string;
+  outro: string;
+  next: { icon: string; title: string } | null;
+  onNext(): void;
+  onList(): void;
+  onPlay(): void;
+}
+
 export interface HudState {
   selected: Blob[];
   building: Building | null;
@@ -104,6 +126,9 @@ export class Hud {
   private readonly logEl: HTMLElement;
   private readonly mini: HTMLCanvasElement;
   private readonly endEl: HTMLElement;
+  private readonly tutEl: HTMLElement;
+  private readonly pointsEl: HTMLElement;
+  private tutKey = '';
   private panelKey = '';
   private hintHtml = '';
   private endShown = false;
@@ -132,6 +157,8 @@ export class Hud {
           <button data-menu title="Menu">☰</button>
         </div>
       </div>
+      <div class="tut-points"></div>
+      <div class="tut" hidden></div>
       <div class="toasts"></div>
       <div class="hint" hidden></div>
       <div class="panel" hidden></div>
@@ -157,6 +184,12 @@ export class Hud {
     this.logEl = q('.log');
     this.mini = q('.minimap');
     this.endEl = q('.end');
+    this.tutEl = q('.tut');
+    this.pointsEl = q('.tut-points');
+    this.tutEl.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('[data-tut-min]')) this.tutEl.classList.toggle('min');
+      this.placeTut();
+    });
 
     this.top.addEventListener('click', (e) => {
       const t = (e.target as HTMLElement).closest('button');
@@ -219,6 +252,7 @@ export class Hud {
     }, { techp: lvl >= MAX_TECH ? 1 : (me.research - lo) / (hi - lo) });
 
     this.score.innerHTML = w.factions
+      .filter((f) => f.isPlayer || f.pop > 0)
       .map((f) => {
         const label = f.isNeutral ? 'Wild' : f.isPlayer ? 'You' : esc(f.name);
         const tech = f.isNeutral ? '' : ` <small>T${f.tech}</small>`;
@@ -243,6 +277,8 @@ export class Hud {
       btn.querySelector<HTMLElement>(`[data-cost="${k}"]`)!.textContent = `${cost}`;
     }
 
+    // On phones the panel would cover the map while you pick a target, so it steps aside.
+    this.root.classList.toggle('picking', !!(s.command || s.buildMode));
     this.renderPanel(w, s);
   }
 
@@ -503,6 +539,124 @@ export class Hud {
     el.innerHTML = `<span class="dot" style="background:${hex(color)}"></span>${esc(text)}`;
     this.logEl.prepend(el);
     while (this.logEl.children.length > 10) this.logEl.lastElementChild!.remove();
+  }
+
+  /** Tutorial mode: show only the buildings this level uses, and the win goal only if it counts. */
+  setTutorial(goal: boolean, build: readonly BuildingKind[]): void {
+    this.root.classList.add('tut-on');
+    this.top.querySelector<HTMLElement>('.chip.goal')!.hidden = !goal;
+    for (const b of this.buildBar.querySelectorAll<HTMLElement>('[data-build]')) {
+      b.hidden = !build.includes(b.dataset.build as BuildingKind);
+    }
+    this.buildBar.hidden = build.length === 0;
+  }
+
+  tutorial(c: TutCard | null): void {
+    if (!c) {
+      this.tutEl.hidden = true;
+      this.tutKey = '';
+      this.toasts.style.top = '';
+      return;
+    }
+    this.tutEl.hidden = false;
+    const key = `${c.title}|${c.step}`;
+    if (key !== this.tutKey) {
+      this.tutKey = key;
+      const dots = Array.from({ length: c.steps }, (_, i) => `<i class="${i < c.step ? 'did' : i === c.step ? 'now' : ''}"></i>`).join('');
+      this.tutEl.innerHTML = `<button class="tut-h" data-tut-min title="Hide or show the steps">
+          <span>${c.icon} ${esc(c.title)}</span><span class="dots" title="Step ${c.step + 1} of ${c.steps}">${dots}</span>
+        </button>
+        <div class="tut-b"><b>${esc(c.text)}</b>${c.sub ? `<small>${esc(c.sub)}</small>` : ''}
+          <div class="tut-p" hidden><i class="bar"><i data-w="tp"></i></i><span data-v="tp"></span></div>
+        </div>`;
+      // A new step un-hides the card and pops it, so you notice.
+      this.tutEl.classList.remove('min', 'next');
+      void this.tutEl.offsetWidth;
+      if (c.step > 0) this.tutEl.classList.add('next');
+    }
+    const bar = this.tutEl.querySelector<HTMLElement>('.tut-p')!;
+    bar.hidden = !c.progress;
+    if (c.progress) {
+      const { n, of, label = '' } = c.progress;
+      const shown = Math.max(0, Math.min(n, of));
+      const text = label.startsWith('%') ? `${shown}${label}${of !== 100 ? ` · goal ${of}%` : ''}` : `${shown}/${of} ${label}`;
+      fill(this.tutEl, { tp: text }, { tp: shown / of });
+    }
+    this.placeTut();
+  }
+
+  /**
+   * The part of the screen the HUD leaves clear (CSS px). On phones the
+   * selection panel can cover the lower half, so keep to the top.
+   */
+  freeArea(): { x0: number; y0: number; x1: number; y1: number } {
+    const w = this.root.clientWidth;
+    const h = this.root.clientHeight;
+    const phone = w <= 700;
+    const under = (el: HTMLElement): number => (el.hidden ? 0 : el.getBoundingClientRect().bottom);
+    const y0 = Math.max(under(this.top), under(this.tutEl)) + 8;
+    const y1 = phone ? h - 100 - 0.42 * h : h - 120;
+    const x0 = phone ? 8 : 320;
+    const x1 = w - (phone ? 8 : this.mode.eventLog ? 270 : 20);
+    return { x0, y0, x1, y1: Math.max(y0 + 120, y1) };
+  }
+
+  /** Bobbing labels over things on the map, in screen px. Off-screen ones stick to the edge. */
+  points(list: readonly { x: number; y: number; label: string }[]): void {
+    const el = this.pointsEl;
+    while (el.children.length < list.length) el.append(Object.assign(document.createElement('div'), { className: 'tut-point', innerHTML: '<span></span>' }));
+    while (el.children.length > list.length) el.lastElementChild!.remove();
+    const w = this.root.clientWidth;
+    const h = this.root.clientHeight;
+    list.forEach((p, i) => {
+      const d = el.children[i] as HTMLElement;
+      const span = d.firstElementChild as HTMLElement;
+      if (span.textContent !== p.label) span.textContent = p.label;
+      const x = Math.max(50, Math.min(w - 50, p.x));
+      const y = Math.max(90, Math.min(h - 20, p.y));
+      d.style.transform = `translate(${x}px, ${y}px)`;
+    });
+  }
+
+  /** Keep the card under the top bar (which can wrap) and the toasts under the card. */
+  private placeTut(): void {
+    if (this.tutEl.hidden) return;
+    const top = this.top.getBoundingClientRect().bottom - this.root.getBoundingClientRect().top + 6;
+    this.tutEl.style.top = `${top}px`;
+    this.toasts.style.top = `${top + this.tutEl.offsetHeight + 6}px`;
+  }
+
+  tutorialDone(d: TutDone): void {
+    this.endShown = true;
+    this.tutorial(null);
+    this.endEl.hidden = false;
+    const nextBtn = d.next
+      ? `<button data-next class="good">Next: ${d.next.icon} ${esc(d.next.title)}</button>`
+      : `<button data-play class="good">🎉 Play a real game</button>`;
+    this.endEl.innerHTML = `<div class="endbar" hidden>
+      <span>✅ ${esc(d.title)}</span>
+      ${d.next ? '<button data-next class="good">Next ▶</button>' : '<button data-play class="good">Play</button>'}
+      <button data-list>📋 Tutorials</button><button data-back>Show</button>
+    </div>
+    <div class="card tut-done">
+      <div class="big">${d.icon}</div>
+      <h2>✅ ${esc(d.title)}: done!</h2>
+      <p>${esc(d.outro)}</p>
+      <div class="acts">${nextBtn}<button data-list>📋 All tutorials</button><button data-stay>Keep playing</button></div>
+    </div>`;
+    const card = this.endEl.querySelector<HTMLElement>('.card')!;
+    const bar = this.endEl.querySelector<HTMLElement>('.endbar')!;
+    const showCard = (on: boolean): void => {
+      card.hidden = !on;
+      bar.hidden = on;
+      this.endEl.classList.toggle('looking', !on);
+    };
+    const on = (sel: string, fn: () => void): void => this.endEl.querySelectorAll(sel).forEach((b) => b.addEventListener('click', fn));
+    on('[data-next]', () => d.onNext());
+    on('[data-play]', () => d.onPlay());
+    on('[data-list]', () => d.onList());
+    on('[data-stay]', () => showCard(false));
+    on('[data-back]', () => showCard(true));
   }
 
   hint(text: string | null, sub = ''): void {

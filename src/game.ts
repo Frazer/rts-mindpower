@@ -5,6 +5,7 @@ import type { TraitKey } from './sim/traits';
 import { lessonValue } from './sim/systems/jobs';
 import type { Blob, Building, BuildingKind, Job, OrderCommand, SimEvent } from './sim/types';
 import { World } from './sim/world';
+import { TutorialRun, say, type Level } from './tutorials';
 import { Hud, JOBS, type CommandMode, type PanelAction, type TeamAct, type TeamTab } from './ui/hud';
 
 interface PointerInfo {
@@ -22,9 +23,21 @@ const BUILD_HOTKEYS: Record<string, BuildingKind> = { q: 'house', w: 'school', e
 /** Radius of the crowd a group befriend aims at. */
 const AREA_R = 150;
 
+export interface TutorialCallbacks {
+  level: Level;
+  next: Level | null;
+  /** The level was finished (save progress). */
+  done(): void;
+  onNext(): void;
+  onList(): void;
+  /** Start a real game. */
+  onPlay(): void;
+}
+
 export interface GameCallbacks {
   onMenu(): void;
   onRestart(): void;
+  tutorial?: TutorialCallbacks;
 }
 
 /** Owns the loop and turns input into sim commands. */
@@ -49,6 +62,8 @@ export class Game {
   private readonly groups = new Map<string, number[]>();
   private readonly throttle = new Map<string, number>();
   private warnedViolence = false;
+  /** When the level-complete card should appear (a beat after the last step, so you see it land). */
+  private tutDoneAt = 0;
   private readonly cleanup: (() => void)[] = [];
 
   private constructor(
@@ -56,12 +71,15 @@ export class Game {
     private readonly world: World,
     private readonly r: GameRenderer,
     private readonly hud: Hud,
+    private readonly tut: TutorialRun | null,
+    private readonly tutCb: TutorialCallbacks | null,
   ) {
     this.speed = mode.defaultSpeed;
   }
 
   static async start(mode: ModeConfig, host: HTMLElement, hudRoot: HTMLElement, cb: GameCallbacks, seed = Date.now()): Promise<Game> {
-    const world = new World(mode, seed);
+    const tut = cb.tutorial ? new TutorialRun(cb.tutorial.level) : null;
+    const world = new World(mode, seed, tut?.worldOptions());
     const r = await GameRenderer.create(host, world);
     let game: Game | null = null;
     const hud = new Hud(hudRoot, mode, {
@@ -78,7 +96,7 @@ export class Game {
       teamPick: (id) => game?.teamPick(id),
       teamAct: (a, ids) => game?.teamAct(a, ids),
     });
-    game = new Game(mode, world, r, hud);
+    game = new Game(mode, world, r, hud, tut, cb.tutorial ?? null);
     game.init();
     return game;
   }
@@ -91,12 +109,84 @@ export class Game {
     cam.zoom = this.mode.id === 'casual' ? 1.05 : 0.9;
     this.bindInput();
     this.r.app.ticker.add(this.frame);
+    if (this.tut) {
+      this.hud.setTutorial(!!this.tut.level.victory, this.tut.level.build ?? []);
+      this.hud.tutorial(this.tutCard());
+      this.frameView(this.tut.level.view);
+      return;
+    }
     this.hud.toast(
       this.mode.id === 'casual'
         ? '👋 Tap one of your blue blobs, then tap a stranger to befriend them! 👥 Team finds your best blobs.'
         : '👋 Box-select blobs, right-click a crowd to befriend it. Right-click a rival building to take it over. Tab = team.',
       'info',
     );
+  }
+
+  /** Fit a world rectangle into the part of the screen the HUD leaves clear. */
+  private frameView([x0, y0, x1, y1]: readonly [number, number, number, number]): void {
+    const cam = this.r.camera;
+    const { width, height } = this.r.app.screen;
+    cam.resize(width, height);
+    const a = this.hud.freeArea();
+    // Never so small that blobs are hard to tap; then the edges just spill over.
+    const zoom = Math.max(cam.minZoom, 0.6, Math.min(1.25, (a.x1 - a.x0) / (x1 - x0), (a.y1 - a.y0) / (y1 - y0)));
+    cam.zoom = zoom;
+    this.jumpTo((x0 + x1) / 2, (y0 + y1) / 2);
+  }
+
+  private tutCard() {
+    const t = this.tut!;
+    const s = t.current();
+    const m = this.mode.id;
+    if (!s) {
+      const n = t.level.steps.length;
+      return { icon: t.level.icon, title: t.level.title, step: n, steps: n, text: '✅ Nice!', sub: '', progress: null };
+    }
+    return {
+      icon: t.level.icon,
+      title: t.level.title,
+      step: t.step,
+      steps: t.level.steps.length,
+      text: say(s.text, m),
+      sub: s.sub ? say(s.sub, m) : '',
+      progress: t.progress(this.world, this.ownSelected()),
+    };
+  }
+
+  private updateTutorial(events: readonly SimEvent[], now: number): void {
+    const t = this.tut;
+    if (!t) return;
+    if (t.done) {
+      if (this.tutDoneAt && now >= this.tutDoneAt) {
+        this.tutDoneAt = 0;
+        this.finishTutorial();
+      }
+      return;
+    }
+    if (!t.update(this.world, this.ownSelected(), events)) return;
+    this.hud.tutorial(this.tutCard());
+    if (t.done) this.tutDoneAt = now + 1300;
+  }
+
+  private finishTutorial(): void {
+    const t = this.tut!;
+    const cb = this.tutCb!;
+    cb.done();
+    this.buildMode = null;
+    this.command = null;
+    this.team = null;
+    this.selected.clear();
+    this.selBuilding = null;
+    this.hud.tutorialDone({
+      icon: t.level.icon,
+      title: t.level.title,
+      outro: say(t.level.outro, this.mode.id),
+      next: cb.next ? { icon: cb.next.icon, title: cb.next.title } : null,
+      onNext: cb.onNext,
+      onList: cb.onList,
+      onPlay: cb.onPlay,
+    });
   }
 
   destroy(): void {
@@ -129,6 +219,7 @@ export class Game {
     const events = w.drainEvents();
     this.r.fx(events);
     this.narrate(events);
+    this.updateTutorial(events, now);
 
     for (const id of this.selected) if (!w.byId.has(id)) this.selected.delete(id);
 
@@ -140,6 +231,10 @@ export class Game {
     }
 
     this.r.render(this.paused ? 1 : this.acc / DT, now, dt, this.selected, this.selBuilding, this.buildMode ? PLAYER : -1);
+    if (this.tut) {
+      const pts = this.tut.done ? [] : this.tut.points(w, this.ownSelected());
+      this.hud.points(pts.map((p) => ({ ...this.r.camera.toScreen(p.x, p.y), label: p.label })));
+    }
 
     this.hudTimer -= dt;
     if (this.hudTimer <= 0) {
@@ -147,13 +242,14 @@ export class Game {
       this.hud.update(w, this.hudState());
       const [hint, sub] = this.hintText();
       this.hud.hint(hint, sub);
+      if (this.tut && !this.tut.done) this.hud.tutorial(this.tutCard()); // progress bars
     }
     this.miniTimer -= dt;
     if (this.miniTimer <= 0) {
       this.miniTimer = 0.25;
       this.hud.drawMinimap(w, this.r.camera.view());
     }
-    if (w.outcome) this.hud.showEnd(w);
+    if (w.outcome && !(this.tut?.done && w.outcome.winner === PLAYER)) this.hud.showEnd(w);
   };
 
   private hudState() {
@@ -204,7 +300,7 @@ export class Game {
         case 'convert':
           if (e.faction === PLAYER) {
             this.hud.toast(`💗 ${e.text} joined you!`, 'good');
-            if (this.once('tipTeach', Infinity)) {
+            if (!this.tut && this.once('tipTeach', Infinity)) {
               this.hud.toast('📚 Tip: select a charming blob and press Teach to pass its best traits to a teammate.', 'info');
             }
           }
@@ -281,6 +377,7 @@ export class Game {
   }
 
   private toggleBuild(kind: BuildingKind): void {
+    if (this.tut && !(this.tut.level.build ?? []).includes(kind)) return;
     this.command = null;
     const me = this.world.factions[PLAYER];
     const cost = buildCost(me, kind);
@@ -326,7 +423,7 @@ export class Game {
           (x) => this.world.commandable(x, PLAYER) && x.age >= ADULT_AGE && (x.x - b.x) ** 2 + (x.y - b.y) ** 2 < 260 * 260,
         );
         this.selected = new Set(near.map((x) => x.id));
-        this.hud.toast(`👥 Selected ${near.length} blobs. Now tap 💗 Befriend and tap a crowd.`, 'info');
+        this.hud.toast(`👥 Selected ${near.length} blobs. ${this.mode.boxSelect ? 'Now right-click a crowd of strangers.' : 'Now tap a stranger to befriend their crowd.'}`, 'info');
         return;
       }
       case 'sendBonker':
@@ -371,6 +468,7 @@ export class Game {
 
   private setTeam(tab: TeamTab | null): void {
     this.team = tab;
+    if (tab) this.tut?.did.add('team');
     this.buildMode = null;
     this.command = null;
   }
@@ -392,7 +490,7 @@ export class Game {
       this.team = null;
       this.selBuilding = null;
       this.selected = new Set(blobs.map((b) => b.id));
-      this.hud.toast(`👥 Selected ${blobs.length}. Tap 💗 Befriend, then tap a crowd of strangers.`, 'info');
+      this.hud.toast(`👥 Selected ${blobs.length}. ${this.mode.boxSelect ? 'Right-click a crowd of strangers.' : 'Now tap a stranger to befriend their crowd.'}`, 'info');
       return;
     }
     if (act === 'teacher' || act === 'recruiter') {
@@ -443,9 +541,12 @@ export class Game {
     this.paused = !this.paused;
   }
 
+  /** Centre the camera on a point, in the part of the screen the HUD leaves clear. */
   private jumpTo(x: number, y: number): void {
-    this.r.camera.x = x;
-    this.r.camera.y = y;
+    const cam = this.r.camera;
+    const a = this.hud.freeArea();
+    cam.x = x - ((a.x0 + a.x1) / 2 - cam.sw / 2) / cam.zoom;
+    cam.y = y - ((a.y0 + a.y1) / 2 - cam.sh / 2) / cam.zoom;
   }
 
   // ───────────────────────────── input ─────────────────────────────
@@ -559,6 +660,7 @@ export class Game {
     for (const bl of this.world.blobs) {
       if (bl.faction === PLAYER && bl.role !== 'police' && bl.x >= x0 && bl.x <= x1 && bl.y >= y0 && bl.y <= y1) this.selected.add(bl.id);
     }
+    if (this.selected.size) this.tut?.did.add('box');
     this.command = null;
   }
 
@@ -612,6 +714,7 @@ export class Game {
 
     if (button === 2) {
       if (!own.length) return;
+      this.tut?.did.add('rightClick');
       if (blob && blob.faction !== PLAYER) {
         if (this.command === 'attack') this.order('attack', blob);
         else this.befriendAt(x, y, blob);
@@ -705,12 +808,15 @@ export class Game {
     if (/^[1-9]$/.test(k)) {
       if (mod) {
         e.preventDefault();
-        this.groups.set(k, this.ownSelected().map((b) => b.id));
+        const ids = this.ownSelected().map((b) => b.id);
+        this.groups.set(k, ids);
         this.hud.toast(`Group ${k} saved`, 'info');
+        if (ids.length) this.tut?.did.add('groupSave');
       } else {
         const g = this.groups.get(k)?.filter((id) => this.world.byId.has(id)) ?? [];
         this.selected = new Set(g);
         this.selBuilding = null;
+        if (g.length) this.tut?.did.add('groupRecall');
       }
       return;
     }

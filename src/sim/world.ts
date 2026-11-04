@@ -58,6 +58,18 @@ export const FACTION_DEFS: readonly FactionDef[] = [
 
 const emptyCounts = (): Record<BuildingKind, number> => ({ hall: 0, house: 0, school: 0, lab: 0, market: 0, police: 0, fountain: 0 });
 
+/** Lets a tutorial build its own small map instead of the normal one. */
+export interface WorldOptions {
+  /** Places blobs and buildings by hand. Factions are still created as usual. */
+  scenario?: (w: World) => void;
+  /** Map size in pixels (defaults to the mode's). */
+  size?: readonly [number, number];
+  /** Rival teams think and build (default true). */
+  ai?: boolean;
+  /** Check for a winner (default true). */
+  victory?: boolean;
+}
+
 export interface Outcome {
   winner: number;
   reason: string;
@@ -84,19 +96,30 @@ export class World {
   housingTimer = 0;
   townTimer = 0;
 
-  constructor(readonly mode: ModeConfig, seed: number) {
+  readonly aiOn: boolean;
+  readonly victoryOn: boolean;
+
+  constructor(readonly mode: ModeConfig, seed: number, opts: WorldOptions = {}) {
     this.rng = new Rng(seed);
-    this.w = mode.worldW;
-    this.h = mode.worldH;
+    this.w = opts.size?.[0] ?? mode.worldW;
+    this.h = opts.size?.[1] ?? mode.worldH;
+    this.aiOn = opts.ai ?? true;
+    this.victoryOn = opts.victory ?? true;
     this.grid = new Grid(this.w, this.h);
-    this.setup();
+    this.createFactions();
+    if (opts.scenario) {
+      opts.scenario(this);
+      this.neutralCap = this.blobs.filter((b) => b.faction === NEUTRAL).length;
+    } else {
+      this.setup();
+    }
     this.refreshCounts();
     this.events = []; // setup noise (initial town halls) isn't news
   }
 
   // ───────────────────────────── setup ─────────────────────────────
 
-  private setup(): void {
+  private createFactions(): void {
     const n = FACTION_DEFS.length;
     FACTION_DEFS.forEach((d, i) => {
       this.factions.push({
@@ -120,7 +143,10 @@ export class World {
         counts: emptyCounts(),
       });
     });
+  }
 
+  /** The normal map: a town per team and camps of wanderers in between. */
+  private setup(): void {
     const rng = this.rng;
     const halls: Building[] = [];
     FACTION_DEFS.forEach((d, i) => {
@@ -250,7 +276,7 @@ export class World {
 
     economy(this, dt);
     housing(this, dt);
-    ai(this, dt);
+    if (this.aiOn) ai(this, dt);
     jobs(this, dt);
     behaviour(this, dt);
     social(this, dt);
@@ -261,7 +287,7 @@ export class World {
 
     this.cleanup();
     this.victoryTimer -= dt;
-    if (this.victoryTimer <= 0) {
+    if (this.victoryOn && this.victoryTimer <= 0) {
       this.victoryTimer = 1;
       this.checkVictory();
     }

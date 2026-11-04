@@ -6,7 +6,7 @@ Built with TypeScript, PixiJS v8 and Vite. There is one simulation with two tuni
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173  (?mode=casual|pro&seed=123 skips the menu)
+npm run dev        # http://localhost:5173  (?mode=casual|pro&seed=123 skips the menu, add &tut=hello for a tutorial)
 npm test           # headless sim tests + balance tables (add --silent=false to see them)
 npm run build      # type-check + production bundle in dist/
 ```
@@ -29,6 +29,25 @@ npm run build      # type-check + production bundle in dist/
 The menu only offers Pro on devices with a mouse or trackpad, or once a key has been pressed. Phones and tablets get Casual only (`?mode=pro` still forces it, for testing).
 
 You win by leading 90% of all blobs. When the game ends you can close the results and pan around the map.
+
+## Tutorials
+
+Each mode has its own list of little levels on the menu (🎓 Tutorials). Each level is a small hand-built map with the rival AI switched off, and it shows one or two ideas. A card at the top gives the current step and ticks it off when you do it. A bobbing label points at the blob or building the step is about. The wording follows the mode: taps in Casual, mouse and keys in Pro.
+
+| # | Level | Shows |
+|---|---|---|
+| 1 | 👋 Say hello | selecting, befriending |
+| (Pro) | ⌨️ Pro controls | box select, Ctrl+1 / 1 groups, right-click |
+| 2 | 👥 Make lots of friends | group select, befriending a crowd |
+| 3 | 🏠 Room for babies | houses, babies |
+| 4 | 🏫 School days | schools, choosing what they teach |
+| 5 | 🎓 Pass it on | Team panel, Teach, the Teacher job |
+| 6 | ⛲ Friendship Fountain | fountains |
+| 7 | 🏳️ Take it over | taking over a building |
+| 8 | 🚓 Keep the peace | police and violence |
+| 9 | 🌍 Unite the island | everything, with the normal 90% win |
+
+Finished levels get a ✓ in the list. Progress is kept per mode in this browser's `localStorage` (if storage is blocked it lasts for the visit). Levels are defined in `src/tutorials.ts`: a setup function, steps with a `done` check, and optional progress bars and pointers. `tests/tutorials.test.ts` plays every level in both modes to prove each can be finished.
 
 ## The 13 traits and what they do
 
@@ -84,7 +103,9 @@ src/modes.ts    Casual vs Pro tuning
 src/render/     Pixi: procedurally drawn blob textures, camera, buildings, emoji FX
 src/ui/hud.ts   DOM overlay: top bar, build bar, selection panel, toasts, log, minimap
 src/game.ts     main loop + input → sim commands
-tests/          headless sim tests
+src/tutorials.ts  tutorial levels and the step tracker (pure logic, tested headless)
+src/progress.ts   which tutorials you've finished (localStorage)
+tests/          headless sim tests, and a test that plays every tutorial level
 ```
 
 The simulation never reads from the renderer. The UI sends `world.command(...)` and reads state and `drainEvents()`.

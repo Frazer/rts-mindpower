@@ -918,6 +918,309 @@ kbd {
   font-size: 14px;
 }
 
+/* ───────────── tutorials ───────────── */
+
+.tut {
+  position: absolute;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(calc(100vw - 16px), 440px);
+  background: var(--paper);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  border: 3px solid #ffd76a;
+  overflow: hidden;
+}
+
+.tut.next {
+  animation: tut-next 0.4s ease-out;
+}
+
+@keyframes tut-next {
+  0% {
+    transform: translateX(-50%) scale(0.92);
+  }
+  60% {
+    transform: translateX(-50%) scale(1.03);
+  }
+}
+
+.tut-h {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #fff3c4;
+  font-weight: 600;
+  font-size: 13px;
+  text-align: left;
+}
+
+.tut-h .dots {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+
+.tut-h .dots i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgba(59, 38, 51, 0.16);
+}
+
+.tut-h .dots i.did {
+  background: var(--good);
+}
+
+.tut-h .dots i.now {
+  background: var(--warn);
+  box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px var(--warn);
+}
+
+.tut-b {
+  display: grid;
+  gap: 3px;
+  padding: 8px 14px 10px;
+  text-align: left;
+}
+
+.tut-b b {
+  font-size: 15.5px;
+  line-height: 1.25;
+}
+
+.tut-b small {
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--ink-soft);
+}
+
+.tut-p {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tut-p .bar {
+  flex: 1;
+}
+
+.tut-p .bar i {
+  background: linear-gradient(90deg, #a6ecc6, var(--good));
+}
+
+.tut.min .tut-b {
+  display: none;
+}
+
+.tut-points {
+  position: absolute;
+  inset: 0;
+  pointer-events: none !important;
+  overflow: hidden;
+}
+
+.tut-point {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.tut-point span {
+  position: absolute;
+  bottom: 10px;
+  left: 0;
+  transform: translateX(-50%);
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: var(--shadow);
+  animation: tut-bob 0.9s ease-in-out infinite;
+}
+
+.tut-point span::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -7px;
+  border: 7px solid transparent;
+  border-top-color: var(--ink);
+}
+
+@keyframes tut-bob {
+  50% {
+    transform: translateX(-50%) translateY(-6px);
+  }
+}
+
+.card.tut-done p {
+  line-height: 1.4;
+}
+
+.card.tut-done .acts button.good {
+  box-shadow: inset 0 0 0 2px var(--good);
+}
+
+/* menu: tutorial buttons and level list */
+
+.learn {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.learn.single {
+  grid-template-columns: 1fr;
+}
+
+.learn button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 16px;
+  background: #fff3c4;
+  font-weight: 600;
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+
+.learn button:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+.learn small {
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+
+.tuts-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tuts-h h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 24px;
+  text-align: left;
+}
+
+.tuts-h button {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: rgba(59, 38, 51, 0.07);
+  font-size: 18px;
+}
+
+.tuts-h .count {
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.menu-card.tuts .tag {
+  text-align: left;
+  margin: 6px 0 12px;
+}
+
+.levels {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.levels button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 28px 34px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: #f3eee6;
+  text-align: left;
+  transition: transform 0.12s;
+}
+
+.levels button:hover {
+  transform: translateX(3px);
+}
+
+.levels .n {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  background: rgba(59, 38, 51, 0.09);
+}
+
+.levels .done .n {
+  background: var(--good);
+  color: #fff;
+}
+
+.levels .up {
+  background: #dff0ff;
+  box-shadow: inset 0 0 0 3px var(--blue);
+}
+
+.levels .ico {
+  font-size: 24px;
+  text-align: center;
+}
+
+.levels .t {
+  display: grid;
+}
+
+.levels .t small {
+  color: var(--ink-soft);
+  font-size: 12.5px;
+}
+
+.levels .go {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.tuts-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.tuts-foot button {
+  font-size: 13px;
+  color: var(--ink-soft);
+  text-decoration: underline;
+}
+
 /* ───────────── phones ───────────── */
 
 @media (max-width: 700px) {
@@ -993,6 +1296,10 @@ kbd {
     font-size: 13px;
   }
 
+  .hud.picking .panel {
+    display: none;
+  }
+
   .log,
   .minimap {
     display: none;
@@ -1002,8 +1309,13 @@ kbd {
     font-size: 34px;
   }
 
-  .modes {
+  .modes,
+  .learn {
     grid-template-columns: 1fr;
+  }
+
+  .tut-b b {
+    font-size: 14.5px;
   }
 }
 

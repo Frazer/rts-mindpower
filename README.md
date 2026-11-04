@@ -9,6 +9,7 @@ npm install
 npm run dev        # http://localhost:5173  (?mode=casual|pro&seed=123 skips the menu, add &tut=hello for a tutorial)
 npm test           # headless sim tests + balance tables (add --silent=false to see them)
 npm run build      # type-check + production bundle in dist/
+npm run package    # every build (web, CrazyGames, Poki), zipped in release/ for upload
 ```
 
 ## How it plays
@@ -24,7 +25,7 @@ npm run build      # type-check + production bundle in dist/
 | Bonk (violence) | **Bonk** button | **X** then click / right-click |
 | Build | tap a button, tap your land | **Q W E R T Y** (Shift keeps placing) |
 | Camera | drag, pinch | wheel zoom, right-drag pan, arrows, minimap, **H** home |
-| Other | | **S** stop, **G** move, Space pause, +/- speed |
+| Other | 🔊 mute button | **S** stop, **G** move, Space pause, +/- speed, **M** mute |
 
 The menu only offers Pro on devices with a mouse or trackpad, or once a key has been pressed. Phones and tablets get Casual only (`?mode=pro` still forces it, for testing).
 
@@ -48,6 +49,37 @@ Each mode has its own list of little levels on the menu (🎓 Tutorials). Each l
 | 9 | 🌍 Unite the island | everything, with the normal 90% win |
 
 Finished levels get a ✓ in the list. Progress is kept per mode in this browser's `localStorage` (if storage is blocked it lasts for the visit). Levels are defined in `src/tutorials.ts`: a setup function, steps with a `done` check, and optional progress bars and pointers. `tests/tutorials.test.ts` plays every level in both modes to prove each can be finished.
+
+## Publishing
+
+There are three builds of the same game. They differ only in which portal SDK they talk to:
+
+| Build | Command | Output | For |
+|---|---|---|---|
+| Web | `npm run build` | `dist/` | itch.io, GitHub Pages, your own site. No ads. |
+| CrazyGames | `npm run build:crazygames` | `dist-crazygames/` | CrazyGames SDK v3: ads, gameplay events, cloud save |
+| Poki | `npm run build:poki` | `dist-poki/` | Poki SDK v2: ads, gameplay events |
+
+`npm run package` builds all three and zips each one into `release/`, ready to upload. Each build only includes its own portal's SDK (portals can reject games that mention a rival's).
+
+`src/platform.ts` is the only file that talks to a portal:
+- **Gameplay start/stop** follow whether you're actually playing: not paused, not in a menu, not on the end screen, not watching an ad.
+- **Ad breaks (midgame)** happen only at natural breaks, when you start another game or tutorial level after the first. Never mid-match, and never on Menu/Back buttons.
+- **Rewarded ad:** a 📺 +75 button appears under the stats in real games (not tutorials) every 3 game-minutes. Watching the ad gives 75 gold.
+- **While an ad plays,** the game pauses, ignores input and goes silent.
+- **Saves** (tutorial ticks, mute) use the CrazyGames cloud save on CrazyGames, and `localStorage` elsewhere.
+- **If a portal SDK fails to load** (ad blockers), the game runs as the plain web build.
+
+**Try a portal in dev:** `?platform=crazygames` or `?platform=poki`. Both SDKs run in a local test mode on localhost, with placeholder ads.
+
+**Other things portals check, already handled:**
+- Relative asset paths.
+- No outside requests: the Fredoka font is bundled.
+- Arrow keys and the mouse wheel don't scroll the page around the game.
+- Audio resumes on iOS after a tap.
+- A loading screen.
+
+**Sound:** short effects are synthesised with Web Audio (`src/audio.ts`), so there are no audio files to download. You'll hear them when you befriend or lose a blob, for births, building, bonks, arrests, takeovers, tech, tutorial steps, wins and errors. Each sound has a minimum gap so busy moments don't get noisy. Mute with 🔊 (or **M**); the setting is saved.
 
 ## The 13 traits and what they do
 
@@ -104,7 +136,10 @@ src/render/     Pixi: procedurally drawn blob textures, camera, buildings, emoji
 src/ui/hud.ts   DOM overlay: top bar, build bar, selection panel, toasts, log, minimap
 src/game.ts     main loop + input → sim commands
 src/tutorials.ts  tutorial levels and the step tracker (pure logic, tested headless)
-src/progress.ts   which tutorials you've finished (localStorage)
+src/progress.ts   which tutorials you've finished (portal cloud save or localStorage)
+src/platform.ts   portal SDKs (CrazyGames, Poki) behind one interface: ads, gameplay events, saves
+src/audio.ts      synthesised sound effects and the mute switch
+scripts/package.sh  builds and zips every version for upload
 tests/          headless sim tests, and a test that plays every tutorial level
 ```
 

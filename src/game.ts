@@ -1,4 +1,6 @@
+import { sound } from './audio';
 import type { ModeConfig } from './modes';
+import { platform } from './platform';
 import { GameRenderer } from './render/renderer';
 import { ADULT_AGE, BUILD_MENU, BUILDINGS, DT, PLAYER, buildCost } from './sim/config';
 import type { TraitKey } from './sim/traits';
@@ -22,6 +24,10 @@ type Drag = 'none' | 'pan' | 'box' | 'pinch';
 const BUILD_HOTKEYS: Record<string, BuildingKind> = { q: 'house', w: 'school', e: 'lab', r: 'market', t: 'police', y: 'fountain' };
 /** Radius of the crowd a group befriend aims at. */
 const AREA_R = 150;
+/** Rewarded ad: gold you get, and game-seconds before the next offer. */
+const GIFT_GOLD = 75;
+const GIFT_FIRST = 45;
+const GIFT_COOLDOWN = 180;
 
 export interface TutorialCallbacks {
   level: Level;
@@ -64,6 +70,11 @@ export class Game {
   private warnedViolence = false;
   /** When the level-complete card should appear (a beat after the last step, so you see it land). */
   private tutDoneAt = 0;
+  /** An ad is playing: the sim and input wait. */
+  private adHold = false;
+  private destroyed = false;
+  private nextGift = GIFT_FIRST;
+  private endSound = false;
   private readonly cleanup: (() => void)[] = [];
 
   private constructor(
@@ -95,6 +106,8 @@ export class Game {
       team: (t) => game?.setTeam(t),
       teamPick: (id) => game?.teamPick(id),
       teamAct: (a, ids) => game?.teamAct(a, ids),
+      sound: () => sound.toggle(),
+      gift: () => void game?.watchAd(),
     });
     game = new Game(mode, world, r, hud, tut, cb.tutorial ?? null);
     game.init();
@@ -166,7 +179,11 @@ export class Game {
     }
     if (!t.update(this.world, this.ownSelected(), events)) return;
     this.hud.tutorial(this.tutCard());
-    if (t.done) this.tutDoneAt = now + 1300;
+    sound.play(t.done ? 'win' : 'step');
+    if (t.done) {
+      this.tutDoneAt = now + 1300;
+      platform.happyTime();
+    }
   }
 
   private finishTutorial(): void {
@@ -190,6 +207,8 @@ export class Game {
   }
 
   destroy(): void {
+    this.destroyed = true;
+    platform.setPlaying(false);
     this.r.app.ticker.remove(this.frame);
     for (const c of this.cleanup) c();
     this.hud.destroy();
@@ -204,7 +223,7 @@ export class Game {
     this.last = now;
     const w = this.world;
 
-    if (!this.paused && !w.outcome) {
+    if (!this.paused && !w.outcome && !this.adHold) {
       this.acc += dt * this.speed;
       let steps = 0;
       while (this.acc >= DT && steps < 10) {
@@ -250,12 +269,62 @@ export class Game {
       this.hud.drawMinimap(w, this.r.camera.view());
     }
     if (w.outcome && !(this.tut?.done && w.outcome.winner === PLAYER)) this.hud.showEnd(w);
+    if (w.outcome && !this.endSound) {
+      this.endSound = true;
+      const won = w.outcome.winner === PLAYER;
+      if (!this.tut) sound.play(won ? 'win' : 'lose');
+      if (won) platform.happyTime();
+    }
+    platform.setPlaying(!this.paused && !w.outcome && !this.adHold && !this.tut?.done);
   };
+
+  /** Pause everything while an ad plays (the platform calls this). */
+  setAdHold(on: boolean): void {
+    this.adHold = on;
+    if (on) {
+      this.keys.clear();
+      this.pointers.clear();
+      this.drag = 'none';
+      this.r.setBox(null);
+    }
+  }
+
+  private giftState(): number | null {
+    if (!platform.ads || this.tut || this.world.outcome) return null;
+    return Math.max(0, this.nextGift - this.world.time);
+  }
+
+  /** Rewarded ad: the player chose to watch one for some gold. */
+  private async watchAd(): Promise<void> {
+    if (this.giftState() !== 0 || this.adHold) return;
+    const ok = await platform.rewardedBreak();
+    if (this.destroyed) return;
+    const w = this.world;
+    if (!ok) {
+      this.nextGift = w.time + 20;
+      this.hud.toast('📺 No ad to show right now. Try again soon.', 'info');
+      return;
+    }
+    w.command({ type: 'gift', faction: PLAYER, gold: GIFT_GOLD });
+    this.nextGift = w.time + GIFT_COOLDOWN;
+    this.hud.toast(`🎁 +${GIFT_GOLD} gold. Thanks for watching!`, 'good');
+    sound.play('coin');
+  }
 
   private hudState() {
     const blobs = [...this.selected].map((id) => this.world.byId.get(id)).filter((b): b is Blob => !!b);
     const building = this.selBuilding !== null ? (this.world.buildings.find((b) => b.id === this.selBuilding) ?? null) : null;
-    return { selected: blobs, building, buildMode: this.buildMode, command: this.command, speed: this.speed, paused: this.paused, team: this.team };
+    return {
+      selected: blobs,
+      building,
+      buildMode: this.buildMode,
+      command: this.command,
+      speed: this.speed,
+      paused: this.paused,
+      team: this.team,
+      muted: sound.isMuted,
+      gift: this.giftState() === null ? null : { ready: this.giftState() === 0, gold: GIFT_GOLD },
+    };
   }
 
   private hintText(): [string | null, string?] {
@@ -298,6 +367,8 @@ export class Game {
     for (const e of events) {
       switch (e.type) {
         case 'convert':
+          if (e.faction === PLAYER) sound.play('befriend');
+          else if (e.other === PLAYER) sound.play('lost');
           if (e.faction === PLAYER) {
             this.hud.toast(`💗 ${e.text} joined you!`, 'good');
             if (!this.tut && this.once('tipTeach', Infinity)) {
@@ -308,6 +379,7 @@ export class Game {
           this.hud.log(`${e.text}: ${w.factions[e.other].name} → ${w.factions[e.faction].name}`, color(e.faction));
           break;
         case 'fearConvert':
+          if (e.faction === PLAYER || e.other === PLAYER) sound.play(e.faction === PLAYER ? 'befriend' : 'lost');
           if (e.faction === PLAYER) this.hud.toast(`😨 ${e.text} gave in out of fear (shaky loyalty)`, 'info');
           else if (e.other === PLAYER) this.hud.toast(`😨 ${e.text} was scared into joining ${name(e.faction)}`, 'bad');
           this.hud.log(`${e.text} scared into ${w.factions[e.faction].name}`, color(e.faction));
@@ -316,6 +388,7 @@ export class Game {
           if (e.other === PLAYER) this.hud.toast(`💨 ${e.text} left to wander`, 'bad');
           break;
         case 'hit':
+          if (e.faction === PLAYER || e.other === PLAYER) sound.play('bonk');
           if (e.other === PLAYER && this.once('hurt', 6)) this.hud.toast(`💥 ${e.text} is attacking your blobs!`, 'bad');
           if (e.faction === PLAYER && this.once('violent', 8)) this.hud.toast(`💥 ${e.text} turned violent — now wanted 🚨`, 'bad');
           if (this.once(`hitlog${e.blob}`, 5)) this.hud.log(`${e.text} attacked a ${w.factions[e.other].name} blob`, color(e.faction));
@@ -325,11 +398,13 @@ export class Game {
           this.hud.log(`${e.text} (${w.factions[e.other].name}) was killed`, color(e.faction));
           break;
         case 'arrest':
+          if (e.faction === PLAYER || e.other === PLAYER) sound.play('arrest');
           if (e.other === PLAYER) this.hud.toast(`🚨 ${e.text} was arrested`, 'bad');
           else if (e.faction === PLAYER) this.hud.toast(`🚓 Your police arrested ${e.text}`, 'good');
           this.hud.log(`${e.text} arrested by ${w.factions[e.faction].name} police`, color(e.faction));
           break;
         case 'tech':
+          if (e.faction === PLAYER) sound.play('tech');
           if (e.faction === PLAYER) this.hud.toast(`💡 ${e.text}! Smarter police & better persuasion`, 'good');
           this.hud.log(`${w.factions[e.faction].name} reached ${e.text}`, color(e.faction));
           break;
@@ -337,6 +412,7 @@ export class Game {
           if (e.faction === PLAYER) this.hud.toast(`⭐ ${e.text} joined your police`, 'info');
           break;
         case 'build':
+          if (e.faction === PLAYER) sound.play('build');
           if (e.faction !== PLAYER && e.faction >= 0) this.hud.log(`${w.factions[e.faction].name} built a ${e.text}`, color(e.faction));
           if (e.faction === PLAYER && w.buildings.find((b) => b.id === e.target)?.kind === 'school') {
             this.selected.clear();
@@ -355,12 +431,17 @@ export class Game {
           this.hud.log(`${w.factions[e.faction].name} started taking over a ${w.factions[e.other].name} ${e.text}`, color(e.faction));
           break;
         case 'usurp':
+          if (e.faction === PLAYER) sound.play('takeover');
+          else if (e.other === PLAYER) sound.play('lostBuilding');
           if (e.faction === PLAYER) this.hud.toast(`🏳️ You took over the ${e.text}!`, 'good');
           else if (e.other === PLAYER) this.hud.toast(`😱 ${w.factions[e.faction].name} took your ${e.text}`, 'bad');
           this.hud.log(`${w.factions[e.faction].name} took a ${w.factions[e.other].name} ${e.text}`, color(e.faction));
           break;
         case 'notice':
           if (e.faction === PLAYER) this.hud.toast(e.text, 'info');
+          break;
+        case 'birth':
+          if (e.faction === PLAYER) sound.play('birth');
           break;
         default:
           break;
@@ -384,6 +465,7 @@ export class Game {
     if (this.buildMode !== kind && me.gold < cost) {
       const d = BUILDINGS[kind];
       this.hud.toast(`${d.icon} ${d.label} needs ${cost} gold (you have ${Math.floor(me.gold)}). Gold builds up over time.`, 'info');
+      sound.play('error');
       return;
     }
     this.buildMode = this.buildMode === kind ? null : kind;
@@ -449,6 +531,7 @@ export class Game {
     const cy = target?.y ?? y;
     this.world.command({ type: 'befriendArea', faction: PLAYER, ids: own.map((b) => b.id), x: cx, y: cy, r: AREA_R, target: target?.id });
     this.r.pulse(cx, cy, AREA_R, 0xff7eb6);
+    sound.play('go');
   }
 
   private usurpAt(bld: Building): void {
@@ -456,6 +539,7 @@ export class Game {
     if (!own.length) return;
     this.world.command({ type: 'order', faction: PLAYER, ids: own.map((b) => b.id), order: 'usurp', building: bld.id });
     this.r.pulse(bld.x, bld.y, 80, 0xffffff);
+    sound.play('go');
     this.hud.toast(`🏳️ ${own.length > 1 ? `${own.length} blobs go` : `${own[0].name} goes`} to take over the ${BUILDINGS[bld.kind].label}`, 'info');
   }
 
@@ -524,6 +608,7 @@ export class Game {
     const own = this.ownSelected();
     if (!own.length) return;
     this.world.command({ type: 'order', faction: PLAYER, ids: own.map((b) => b.id), order, target: target?.id, x, y });
+    sound.play('go');
     if (order === 'teach' && target) this.hud.toast(`📚 ${own.length > 1 ? `${own.length} blobs go` : `${own[0].name} goes`} to teach ${target.name}`, 'info');
     if (order === 'attack' && target) this.violenceWarning();
   }
@@ -575,6 +660,7 @@ export class Game {
   }
 
   private onDown(e: PointerEvent): void {
+    if (this.adHold) return;
     const p = this.local(e);
     this.pointers.set(e.pointerId, { x: p.x, y: p.y, sx: p.x, sy: p.y, button: e.button, mouse: e.pointerType === 'mouse' });
     try {
@@ -699,6 +785,7 @@ export class Game {
       const res = w.canPlace(PLAYER, this.buildMode, x, y);
       if (!res.ok) {
         this.hud.toast(res.reason, 'info');
+        sound.play('error');
         return;
       }
       w.command({ type: 'build', faction: PLAYER, kind: this.buildMode, x, y });
@@ -763,6 +850,7 @@ export class Game {
     if (blob) {
       this.selBuilding = null;
       this.team = null;
+      sound.play('select');
       if (shift && blob.faction === PLAYER) {
         if (this.selected.has(blob.id)) this.selected.delete(blob.id);
         else this.selected.add(blob.id);
@@ -777,13 +865,17 @@ export class Game {
   }
 
   private onKey(e: KeyboardEvent): void {
-    if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+    if ((e.target as HTMLElement)?.tagName === 'INPUT' || this.adHold) return;
     const k = e.key.toLowerCase();
     this.keys.add(e.key);
     const mod = e.ctrlKey || e.metaKey;
     if (k === ' ') {
       e.preventDefault();
       this.togglePause();
+      return;
+    }
+    if (k === 'm') {
+      sound.toggle();
       return;
     }
     if (k === 'escape') {

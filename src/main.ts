@@ -1,6 +1,9 @@
+import '@fontsource-variable/fredoka/wght.css';
 import './style.css';
+import { sound } from './audio';
 import { Game } from './game';
 import { MODES, type ModeId } from './modes';
+import { platform } from './platform';
 import { completed, markCompleted, resetProgress } from './progress';
 import { findLevel, levelsFor } from './tutorials';
 
@@ -44,6 +47,16 @@ function stopGame(): void {
 
 const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 
+const soundButton = (): string =>
+  `<button class="menu-sound" data-sound title="Sound on/off">${sound.isMuted ? '🔇' : '🔊'}</button>`;
+
+function bindSound(): void {
+  menu.querySelector('[data-sound]')?.addEventListener('click', () => {
+    sound.toggle();
+    refreshMenu();
+  });
+}
+
 function learnButton(mode: ModeId, label: string): string {
   const all = levelsFor(mode);
   const done = all.filter((l) => completed(mode).has(l.id)).length;
@@ -55,7 +68,7 @@ function showMenu(): void {
   screen = 'main';
   const pro = proOk();
   const rec = (id: ModeId): string => (lastMode === id || !pro ? 'rec' : '');
-  menu.innerHTML = `
+  menu.innerHTML = `${soundButton()}
     <div class="menu-card">
       <div class="logo"><span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span></div>
       <h1>Mind Blobs</h1>
@@ -90,6 +103,7 @@ function showMenu(): void {
   menu.querySelectorAll<HTMLButtonElement>('[data-tuts]').forEach((b) =>
     b.addEventListener('click', () => showTutorials(b.dataset.tuts as ModeId)),
   );
+  bindSound();
 }
 
 /** The level list for one mode, with ticks for the ones you've finished. */
@@ -100,7 +114,7 @@ function showTutorials(mode: ModeId): void {
   const done = completed(mode);
   const upNext = levels.find((l) => !done.has(l.id));
   const single = !proOk();
-  menu.innerHTML = `
+  menu.innerHTML = `${soundButton()}
     <div class="menu-card tuts">
       <div class="tuts-h">
         <button data-back title="Back">←</button>
@@ -134,9 +148,27 @@ function showTutorials(mode: ModeId): void {
   menu.querySelectorAll<HTMLButtonElement>('[data-level]').forEach((b) =>
     b.addEventListener('click', () => void start(mode, b.dataset.level)),
   );
+  bindSound();
 }
 
+/** True after the first game this visit: from then on, starting another is a natural break for an ad. */
+let playedOnce = false;
+let starting = false;
+
 async function start(id: ModeId, levelId?: string): Promise<void> {
+  if (starting) return;
+  starting = true;
+  try {
+    // Portals want ads only at natural breaks, never before the very first game.
+    if (playedOnce) await platform.commercialBreak();
+    playedOnce = true;
+    await launch(id, levelId);
+  } finally {
+    starting = false;
+  }
+}
+
+async function launch(id: ModeId, levelId?: string): Promise<void> {
   game?.destroy();
   game = null;
   lastMode = id;
@@ -166,8 +198,37 @@ async function start(id: ModeId, levelId?: string): Promise<void> {
   if (import.meta.env.DEV) (window as unknown as { __game: Game }).__game = game;
 }
 
-// ?mode=casual|pro skips the menu; add &tut=<level id> to jump into a tutorial.
-const params = new URLSearchParams(location.search);
-const param = params.get('mode');
-if (param === 'casual' || param === 'pro') void start(param, params.get('tut') ?? undefined);
-else showMenu();
+// ─── sound and page behaviour ───
+
+// Browsers start audio only from a gesture, and iOS can suspend it again, so every gesture retries.
+for (const ev of ['pointerdown', 'touchend', 'keydown'] as const) {
+  window.addEventListener(ev, () => sound.unlock(), { capture: true, passive: true });
+}
+document.addEventListener('click', (e) => {
+  if ((e.target as HTMLElement).closest?.('button')) sound.play('tap');
+}, true);
+document.addEventListener('visibilitychange', () => sound.hold('hidden', document.hidden));
+// Inside a portal's iframe, arrow keys would scroll the page around the game.
+window.addEventListener('keydown', (e) => {
+  if (e.key.startsWith('Arrow') && (e.target as HTMLElement)?.tagName !== 'INPUT') e.preventDefault();
+});
+
+// ─── boot ───
+
+async function boot(): Promise<void> {
+  await platform.init();
+  platform.onAd((on) => {
+    sound.hold('ad', on);
+    game?.setAdHold(on);
+  });
+  document.getElementById('boot')?.remove();
+  // Portals want "loading finished" before any "gameplay start".
+  platform.loadingDone();
+  // ?mode=casual|pro skips the menu; add &tut=<level id> to jump into a tutorial.
+  const params = new URLSearchParams(location.search);
+  const param = params.get('mode');
+  if (param === 'casual' || param === 'pro') await start(param, params.get('tut') ?? undefined);
+  else showMenu();
+}
+
+void boot();

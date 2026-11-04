@@ -74,6 +74,9 @@ export interface HudHandlers {
   team(tab: TeamTab | null): void;
   teamPick(id: number): void;
   teamAct(act: TeamAct, ids: number[]): void;
+  sound(): void;
+  /** Watch a rewarded ad for gold. */
+  gift(): void;
 }
 
 /** What the tutorial card shows. */
@@ -105,6 +108,9 @@ export interface HudState {
   speed: number;
   paused: boolean;
   team: TeamTab | null;
+  muted: boolean;
+  /** Rewarded-ad offer: null when there are no ads (or in tutorials), else whether it's ready now. */
+  gift: { ready: boolean; gold: number } | null;
 }
 
 const BUILD_KEYS: Record<string, string> = { house: 'Q', school: 'W', lab: 'E', market: 'R', police: 'T', fountain: 'Y' };
@@ -144,16 +150,18 @@ export class Hud {
         <div class="stats">
           <div class="chip me"><span class="dot" style="background:var(--blue)"></span><b>You</b></div>
           <div class="chip" title="Population / room"><span>👥</span><b data-v="pop"></b></div>
-          <div class="chip" title="Gold: blobs with Financial Smarts earn it, markets boost it"><i class="coin"></i><b data-v="gold"></b></div>
+          <div class="chip gold" title="Gold: blobs with Financial Smarts earn it, markets boost it"><i class="coin"></i><b data-v="gold"></b></div>
           <div class="chip" title="Tech: better police, persuasion and teaching"><span>🔬</span><b data-v="tech"></b><i class="mini"><i data-w="techp"></i></i></div>
           <div class="chip" title="Reputation: violence lowers it, arrests and kindness raise it"><span>⭐</span><b data-v="rep"></b></div>
           <div class="chip goal" title="Your share of all blobs (goal to win)"><span>🌍</span><b data-v="share"></b></div>
+          <button data-gift class="gift" hidden></button>
         </div>
         <div class="score"></div>
         <div class="ctrl">
           ${mode.speeds.map((s) => `<button data-speed="${s}">${s}×</button>`).join('')}
           <button data-team class="team" title="Your team: find your best blobs and give them jobs${keys ? ' (Tab)' : ''}">👥<span> Team</span></button>
           <button data-pause title="Pause${keys ? ' (Space)' : ''}">⏸</button>
+          <button data-sound title="Sound on/off${keys ? ' (M)' : ''}">🔊</button>
           <button data-menu title="Menu">☰</button>
         </div>
       </div>
@@ -197,6 +205,8 @@ export class Hud {
       if (t.dataset.speed) h.speed(Number(t.dataset.speed));
       else if ('pause' in t.dataset) h.pause();
       else if ('team' in t.dataset) h.team(this.teamOpen ? null : 'charm');
+      else if ('sound' in t.dataset) h.sound();
+      else if ('gift' in t.dataset) h.gift();
       else if ('menu' in t.dataset) h.menu();
     });
     this.buildBar.addEventListener('click', (e) => {
@@ -268,6 +278,16 @@ export class Hud {
     this.top.querySelector<HTMLButtonElement>('[data-team]')!.classList.toggle('on', this.teamOpen);
     pauseBtn.classList.toggle('on', s.paused);
     pauseBtn.textContent = s.paused ? '▶' : '⏸';
+    const soundBtn = this.top.querySelector<HTMLButtonElement>('[data-sound]')!;
+    const icon = s.muted ? '🔇' : '🔊';
+    if (soundBtn.textContent !== icon) soundBtn.textContent = icon;
+    soundBtn.classList.toggle('off', s.muted);
+    const gift = this.top.querySelector<HTMLButtonElement>('[data-gift]')!;
+    gift.hidden = !s.gift?.ready;
+    if (s.gift?.ready && !gift.textContent) {
+      gift.innerHTML = `📺<span> +${s.gift.gold}</span>`;
+      gift.title = `Watch a short ad to get ${s.gift.gold} gold`;
+    }
 
     for (const k of BUILD_MENU) {
       const cost = buildCost(me, k);

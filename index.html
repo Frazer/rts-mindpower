@@ -5,11 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#8fc46f" />
     <title>Mind Blobs</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      /* Shown while the game downloads; removed once the menu is ready. */
+      html, body { margin: 0; height: 100%; background: #8fc46f; }
+      #boot { position: fixed; inset: 0; display: grid; place-content: center; justify-items: center; gap: 14px;
+        font: 600 18px ui-rounded, system-ui, sans-serif; color: #3b2633; }
+      #boot i { width: 54px; height: 46px; border-radius: 50% 50% 46% 46%; background: #4fa8ff;
+        box-shadow: inset -6px -8px 0 rgba(0, 0, 0, 0.12); animation: boot-bob 0.9s ease-in-out infinite alternate; }
+      @keyframes boot-bob { to { transform: translateY(-14px) scale(1.06, 0.94); } }
+    </style>
   </head>
   <body>
+    <div id="boot"><i></i>Loading…</div>
     <div id="game"></div>
     <div id="hud" hidden></div>
     <div id="menu" hidden></div>

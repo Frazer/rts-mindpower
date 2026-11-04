@@ -482,6 +482,9 @@ export class World {
         if (s) s.focus = c.trait;
         return;
       }
+      case 'gift':
+        f.gold += Math.max(0, c.gold);
+        return;
     }
   }
 

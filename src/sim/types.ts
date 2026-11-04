@@ -177,4 +177,6 @@ export type Command =
   | { type: 'job'; faction: number; ids: number[]; job: Job }
   | { type: 'autoUsurp'; faction: number; building: number; count: number }
   | { type: 'autoAttack'; faction: number; target: number }
-  | { type: 'focus'; faction: number; building: number; trait: TraitKey };
+  | { type: 'focus'; faction: number; building: number; trait: TraitKey }
+  /** Gold from outside the sim (a rewarded ad). */
+  | { type: 'gift'; faction: number; gold: number };

@@ -6,11 +6,15 @@
   "scripts": {
     "dev": "vite --host",
     "build": "tsc --noEmit && vite build",
+    "build:crazygames": "tsc --noEmit && vite build --mode crazygames",
+    "build:poki": "tsc --noEmit && vite build --mode poki",
+    "package": "bash scripts/package.sh",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
+    "@fontsource-variable/fredoka": "^5.3.0",
     "pixi.js": "^8.22.0"
   },
   "devDependencies": {

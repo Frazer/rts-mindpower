@@ -9,6 +9,8 @@
     "build:crazygames": "tsc --noEmit && vite build --mode crazygames",
     "build:poki": "tsc --noEmit && vite build --mode poki",
     "package": "bash scripts/package.sh",
+    "art": "bash scripts/art.sh",
+    "video": "node scripts/video.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

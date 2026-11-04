@@ -10,6 +10,8 @@ npm run dev        # http://localhost:5173  (?mode=casual|pro&seed=123 skips the
 npm test           # headless sim tests + balance tables (add --silent=false to see them)
 npm run build      # type-check + production bundle in dist/
 npm run package    # every build (web, CrazyGames, Poki), zipped in release/ for upload
+npm run art        # portal covers and thumbnails, rendered to art/covers/ (needs Google Chrome)
+npm run video      # gameplay preview videos in art/videos/ (needs Google Chrome and ffmpeg)
 ```
 
 ## How it plays
@@ -79,6 +81,29 @@ There are three builds of the same game. They differ only in which portal SDK th
 - Audio resumes on iOS after a tap.
 - A loading screen.
 
+**Covers and thumbnails** are in `art/covers/`. They're drawn in `art/cover.html` with the game's own blob shapes and colours, and rendered by `npm run art` with headless Chrome:
+
+| File | Size | For |
+|---|---|---|
+| `crazygames-landscape.png` | 1920×1080 | CrazyGames landscape cover |
+| `crazygames-portrait.png` | 800×1200 | CrazyGames portrait cover |
+| `crazygames-square.png` | 800×800 | CrazyGames square cover |
+| `poki-thumbnail.png` | 1080×1080 | Poki static thumbnail (no text, as Poki asks) |
+| `itch-cover.png` | 1260×1000 | itch.io cover (2× its 630×500) |
+
+The covers show only the title, with no borders or icons, as CrazyGames asks. The art uses no emoji, because emoji images belong to the OS vendor. To change a layout, edit `FORMATS` in `art/cover.html`, then open it in a browser with `?format=<name>` to preview it. If you add a size, add it to `scripts/art.sh` too.
+
+**Gameplay videos** are in `art/videos/`, made by `npm run video` (`npm run video -- portrait` makes just one):
+
+| File | Size | For |
+|---|---|---|
+| `crazygames-landscape.mp4` | 1920×1080, 17 s | CrazyGames landscape preview |
+| `crazygames-portrait.mp4` | 1080×1620 (2:3), 17 s | CrazyGames portrait preview |
+
+Each video opens on its cover and fades into a real Casual game: the blue blobs befriend a crowd of wanderers while pink and orange rivals go after the same crowd. The camera follows the action, pushes in slowly, then pulls back at the end. The videos have no sound and no extra text, and they play at normal speed, as CrazyGames asks. The landscape video uses a laptop-sized page at 1.5×; the portrait one uses the phone layout at 2×.
+
+`scripts/video.mjs` plays the game in headless Chrome on a fake clock, advancing exactly one frame for each frame it captures, so the video plays at true speed however slow capturing is. It starts its own Vite server, so `npm run dev` doesn't need to be running. The scene is tuned to seed 42. If a balance change makes it dull, change `SEED` and `CROWD` there and look at the result again.
+
 **Sound:** short effects are synthesised with Web Audio (`src/audio.ts`), so there are no audio files to download. You'll hear them when you befriend or lose a blob, for births, building, bonks, arrests, takeovers, tech, tutorial steps, wins and errors. Each sound has a minimum gap so busy moments don't get noisy. Mute with 🔊 (or **M**); the setting is saved.
 
 ## The 13 traits and what they do
@@ -140,6 +165,8 @@ src/progress.ts   which tutorials you've finished (portal cloud save or localSto
 src/platform.ts   portal SDKs (CrazyGames, Poki) behind one interface: ads, gameplay events, saves
 src/audio.ts      synthesised sound effects and the mute switch
 scripts/package.sh  builds and zips every version for upload
+art/cover.html      portal covers and thumbnails as SVG; scripts/art.sh renders them to art/covers/
+scripts/video.mjs   records the gameplay preview videos into art/videos/
 tests/          headless sim tests, and a test that plays every tutorial level
 ```
 

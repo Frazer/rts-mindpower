@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Mind Blobs cover</title>
+    <!--
+      Key art for portal covers and thumbnails, drawn as SVG with the same shapes and colours
+      as the game's blobs (src/render/textures.ts, src/render/blobView.ts) so it matches what players see.
+      No emoji: system emoji art belongs to the OS vendor, so hearts and sparkles are drawn here.
+
+      Open with ?format=<name> (see FORMATS below), optionally &w=&h= for another size of the same shape.
+      `npm run art` renders every format to art/covers/.
+    -->
+    <style>
+      @font-face {
+        font-family: 'Fredoka';
+        src: url('../node_modules/@fontsource-variable/fredoka/files/fredoka-latin-wght-normal.woff2') format('woff2-variations');
+        font-weight: 300 700;
+      }
+      html, body { margin: 0; overflow: hidden; background: #8fc46f; }
+      svg { display: block; }
+    </style>
+  </head>
+  <body>
+    <script>
+      const INK = '#3b2633';
+      const OUTLINE = '#6b4f5a';
+      const BLUE = 0x4fa8ff, GREY = 0xc9c2d6, PINK = 0xff7eb6, ORANGE = 0xffa43a;
+
+      // ─── helpers ───
+
+      const hex = (n) => '#' + n.toString(16).padStart(6, '0');
+      /** What Pixi's tint does to a grey pixel: multiply each channel. */
+      const shade = (n, k) => {
+        const c = (s) => Math.round(((n >> s) & 255) * k);
+        return hex((c(16) << 16) | (c(8) << 8) | c(0));
+      };
+      const f = (n) => +n.toFixed(2);
+      const pt = (cx, cy, r, a) => `${f(cx + Math.cos(a) * r)} ${f(cy + Math.sin(a) * r)}`;
+      /** Seeded so every render of a format is identical. */
+      const rng = (seed) => () => {
+        seed |= 0;
+        seed = (seed + 0x6d2b79f5) | 0;
+        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+
+      // ─── blob: same geometry as the game, body radius 32 ───
+
+      function mouth(kind) {
+        const line = `fill="none" stroke="${INK}" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"`;
+        // The game centres each mouth texture's bounding box on (0, 10); these centres reproduce that.
+        if (kind === 'grin') {
+          const cy = 4.76;
+          return `<path d="M${pt(0, cy, 8, 0.1 * Math.PI)} A8 8 0 0 1 ${pt(0, cy, 8, 0.9 * Math.PI)} Z" fill="#8a2a45" stroke="${INK}" stroke-width="2.8" stroke-linejoin="round"/>`;
+        }
+        if (kind === 'smile') return `<path d="M${pt(0, 4.45, 7, 0.2 * Math.PI)} A7 7 0 0 1 ${pt(0, 4.45, 7, 0.8 * Math.PI)}" ${line}/>`;
+        if (kind === 'frown') return `<path d="M${pt(0, 15.56, 7, 1.2 * Math.PI)} A7 7 0 0 1 ${pt(0, 15.56, 7, 1.8 * Math.PI)}" ${line}/>`;
+        if (kind === 'ohh') return `<ellipse cx="0" cy="10" rx="3.6" ry="4.4" fill="${INK}"/>`;
+        return `<path d="M-5 10 L5 10" ${line}/>`;
+      }
+
+      function flower() {
+        let s = '<g transform="translate(17 -24)">';
+        for (let i = 0; i < 5; i++) {
+          const a = (i / 5) * Math.PI * 2;
+          s += `<circle cx="${f(Math.cos(a) * 5)}" cy="${f(Math.sin(a) * 5)}" r="4" fill="#ff8fc4"/>`;
+        }
+        return s + '<circle r="3.5" fill="#ffe066"/></g>';
+      }
+
+      function policeHat() {
+        let star = '';
+        for (let i = 0; i < 10; i++) star += (i ? ' L' : 'M') + pt(0, -31.25, i % 2 ? 2 : 4, -Math.PI / 2 + (i * Math.PI) / 5);
+        return `<rect x="-15" y="-38.25" width="30" height="14" rx="6" fill="#2d4a9a" stroke="#1a2c5e" stroke-width="1.5"/>
+          <ellipse cx="0" cy="-24.25" rx="20" ry="4.5" fill="#1f356f"/><path d="${star} Z" fill="#ffd34d"/>`;
+      }
+
+      /**
+       * One blob at (x, y) = its centre, scale s (1 = game size).
+       * look: where the eyes point, as a direction. hop: lift off the ground, in body units.
+       */
+      function blob({ x, y, s, color, mood = 'smile', look = [0, 0], blush = false, flower: hasFlower = false, hat = false, brows = false, hop = 0, stretch = 0 }) {
+        const sx = 1 - stretch, sy = 1 + stretch;
+        const ll = Math.hypot(look[0], look[1]);
+        const ox = ll ? (look[0] / ll) * 2.6 : 0;
+        const oy = ll ? (look[1] / ll) * 2.2 : 0;
+        const shadowK = Math.max(0.55, 1 - hop / 40);
+        const eyes = [-10, 10].map((ex) => `<circle cx="${ex}" cy="-5" r="7.5" fill="#fff" stroke="${INK}" stroke-width="1.6"/>`).join('');
+        const pupils = [-10, 10]
+          .map((ex) => `<g transform="translate(${f(ex + ox)} ${f(-5 + oy)})"><circle r="3.8" fill="${INK}"/><circle cx="-1.2" cy="-1.3" r="1.3" fill="#fff"/></g>`)
+          .join('');
+        return `<g transform="translate(${f(x)} ${f(y)}) scale(${f(s)})">
+          <ellipse cx="0" cy="29" rx="${f(30 * shadowK)}" ry="${f(9 * shadowK)}" fill="#000" opacity="0.16"/>
+          <g transform="translate(0 ${f(29 - hop)}) scale(${f(sx)} ${f(sy)}) translate(0 -29)">
+            <ellipse rx="32" ry="29" fill="${hex(color)}" stroke="${shade(color, 0x9a / 255)}" stroke-width="3"/>
+            <ellipse cy="11" rx="24" ry="14" fill="${shade(color, 0xe2 / 255)}" opacity="0.9"/>
+            <ellipse rx="9" ry="5.5" fill="#fff" opacity="0.75" transform="translate(-13 -15) rotate(-28.6)"/>
+            ${blush ? '<ellipse cx="-17" cy="5" rx="5" ry="3" fill="#ff6f91" opacity="0.45"/><ellipse cx="17" cy="5" rx="5" ry="3" fill="#ff6f91" opacity="0.45"/>' : ''}
+            ${eyes}${pupils}
+            ${brows ? `<path d="M-15 -17.5 L-5 -12.5 M15 -17.5 L5 -12.5" stroke="${INK}" stroke-width="3.4" stroke-linecap="round"/>` : ''}
+            ${mouth(mood)}
+            ${hat ? policeHat() : ''}${hasFlower ? flower() : ''}
+          </g>
+        </g>`;
+      }
+
+      // ─── props ───
+
+      /** A building like the game's: cream walls, roof in the owner's colour. r is the building radius. */
+      function house({ x, y, r, color }) {
+        const roof = `M${f(-r * 1.12)} ${f(-r * 0.38)} L0 ${f(-r * 1.3)} L${f(r * 1.12)} ${f(-r * 0.38)} Z`;
+        return `<g transform="translate(${f(x)} ${f(y)})">
+          <ellipse cy="${f(r * 0.62)}" rx="${f(r * 1.15)}" ry="${f(r * 0.36)}" fill="#000" opacity="0.15"/>
+          <rect x="${f(-r * 0.92)}" y="${f(-r * 0.45)}" width="${f(r * 1.84)}" height="${f(r * 1.1)}" rx="${f(r * 0.25)}" fill="#fff6e6" stroke="${OUTLINE}" stroke-width="${f(r * 0.1)}"/>
+          <rect x="${f(-r * 0.2)}" y="${f(r * 0.12)}" width="${f(r * 0.4)}" height="${f(r * 0.53)}" rx="${f(r * 0.12)}" fill="${shade(color, 0.85)}" stroke="${OUTLINE}" stroke-width="${f(r * 0.07)}"/>
+          <rect x="${f(-r * 0.7)}" y="${f(-r * 0.2)}" width="${f(r * 0.32)}" height="${f(r * 0.3)}" rx="${f(r * 0.07)}" fill="#bfe3ff" stroke="${OUTLINE}" stroke-width="${f(r * 0.07)}"/>
+          <rect x="${f(r * 0.38)}" y="${f(-r * 0.2)}" width="${f(r * 0.32)}" height="${f(r * 0.3)}" rx="${f(r * 0.07)}" fill="#bfe3ff" stroke="${OUTLINE}" stroke-width="${f(r * 0.07)}"/>
+          <path d="${roof}" fill="${hex(color)}" stroke="${OUTLINE}" stroke-width="${f(r * 0.1)}" stroke-linejoin="round"/>
+        </g>`;
+      }
+
+      function heart({ x, y, s, rot = 0, color = '#ff6f91' }) {
+        return `<g transform="translate(${f(x)} ${f(y)}) rotate(${rot}) scale(${f(s)})">
+          <path d="M0 9 C-6 4.5 -11 0.5 -11 -4.5 C-11 -8.5 -8 -11 -5 -11 C-2.6 -11 -0.8 -9.6 0 -7.6 C0.8 -9.6 2.6 -11 5 -11 C8 -11 11 -8.5 11 -4.5 C11 0.5 6 4.5 0 9 Z"
+            fill="${color}" stroke="#c2406a" stroke-width="1.4" stroke-linejoin="round"/>
+          <ellipse cx="-5.2" cy="-5.6" rx="2.6" ry="1.7" fill="#fff" opacity="0.7" transform="rotate(-35 -5.2 -5.6)"/>
+        </g>`;
+      }
+
+      function sparkle({ x, y, s, color = '#fff3a6' }) {
+        return `<path transform="translate(${f(x)} ${f(y)}) scale(${f(s)})" d="M0 -10 Q1.6 -1.6 10 0 Q1.6 1.6 0 10 Q-1.6 1.6 -10 0 Q-1.6 -1.6 0 -10 Z" fill="${color}"/>`;
+      }
+
+      // ─── ground: the game's meadow ───
+
+      function ground(w, h, seed) {
+        const r = rng(seed);
+        const u = Math.min(w, h) / 1080;
+        let s = `<defs>
+          <radialGradient id="meadow" cx="50%" cy="58%" r="75%"><stop offset="0" stop-color="#d9f0b8"/><stop offset="0.6" stop-color="#c3e49c"/><stop offset="1" stop-color="#93c873"/></radialGradient>
+          <radialGradient id="glow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#fffbe6" stop-opacity="0.75"/><stop offset="1" stop-color="#fffbe6" stop-opacity="0"/></radialGradient>
+        </defs>
+        <rect width="${w}" height="${h}" fill="url(#meadow)"/>`;
+        const n = Math.round((w * h) / (9000 * u * u));
+        const dots = ['#ffffff', '#ffe27a', '#ffb3d1', '#c8b6ff'];
+        for (let i = 0; i < n; i++) {
+          const x = r() * w, y = r() * h, k = r();
+          if (k < 0.6) s += `<ellipse cx="${f(x)}" cy="${f(y)}" rx="${f((9 + r() * 6) * u)}" ry="${f((3.5 + r() * 2) * u)}" fill="#a9d487" opacity="0.8"/>`;
+          else if (k < 0.88) s += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(3.4 * u)}" fill="${dots[i % 4]}"/>`;
+          else s += `<ellipse cx="${f(x)}" cy="${f(y)}" rx="${f(7 * u)}" ry="${f(4.2 * u)}" fill="#e3eecf"/>`;
+        }
+        return s;
+      }
+
+      /** Soft circle of the owner's colour, like the game's territory. */
+      const territory = (x, y, r, color) =>
+        `<circle cx="${f(x)}" cy="${f(y)}" r="${f(r)}" fill="${hex(color)}" opacity="0.13"/>
+         <circle cx="${f(x)}" cy="${f(y)}" r="${f(r)}" fill="none" stroke="${hex(color)}" stroke-opacity="0.35" stroke-width="${f(r * 0.012)}" stroke-dasharray="${f(r * 0.05)} ${f(r * 0.04)}"/>`;
+
+      function title({ x, y, size, lines }) {
+        const sw = size * 0.13;
+        const lh = size * 0.98;
+        const y0 = y - ((lines.length - 1) * lh) / 2;
+        let s = `<g font-family="Fredoka, sans-serif" font-weight="700" font-size="${f(size)}" text-anchor="middle" letter-spacing="${f(size * 0.01)}">`;
+        lines.forEach((t, i) => {
+          const ly = f(y0 + i * lh);
+          s += `<text x="${f(x)}" y="${f(ly + size * 0.07)}" dominant-baseline="central" fill="${INK}" stroke="${INK}" stroke-width="${f(sw)}" stroke-linejoin="round">${t}</text>`;
+          s += `<text x="${f(x)}" y="${ly}" dominant-baseline="central" fill="#fffaf0" stroke="${INK}" stroke-width="${f(sw)}" stroke-linejoin="round" paint-order="stroke">${t}</text>`;
+        });
+        return s + '</g>';
+      }
+
+      // ─── the scene: a blue blob befriending a wanderer, hearts between them ───
+
+      /**
+       * Each format places the same cast. Positions are fractions of the frame; sizes are in "u",
+       * where 1u = 1/1080 of the frame's short side, so a format scales cleanly with its resolution.
+       */
+      const FORMATS = {
+        // CrazyGames: landscape 1920x1080, portrait 800x1200, square 800x800. Title only, no other words.
+        'crazygames-landscape': {
+          w: 1920, h: 1080, seed: 7,
+          title: { x: 0.5, y: 0.17, size: 200, lines: ['Mind Blobs'] },
+          cast: (P) => [
+            P.territory(0.44, 0.7, 520, BLUE),
+            P.house(0.17, 0.42, 66, BLUE),
+            P.house(0.83, 0.37, 60, PINK),
+            P.blob(0.1, 0.62, 2.2, ORANGE, { mood: 'frown', brows: true, look: [1, 0.1] }),
+            P.blob(0.89, 0.6, 2.3, PINK, { mood: 'smile', blush: true, look: [-1, 0.3] }),
+            P.blob(0.25, 0.76, 2.5, BLUE, { mood: 'grin', blush: true, look: [1, -0.2], hop: 4 }),
+            P.blob(0.32, 0.88, 1.6, BLUE, { mood: 'smile', look: [1, -0.4] }),
+            P.glow(0.55, 0.58, 520),
+            P.blob(0.43, 0.66, 4.6, BLUE, { mood: 'grin', blush: true, flower: true, look: [1, -0.1], hop: 7, stretch: 0.05 }),
+            P.blob(0.67, 0.7, 3.4, GREY, { mood: 'ohh', blush: true, look: [-1, -0.25] }),
+            P.hearts(0.6, 0.4, 1),
+          ],
+        },
+        'crazygames-portrait': {
+          w: 800, h: 1200, seed: 11,
+          title: { x: 0.5, y: 0.15, size: 150, lines: ['Mind', 'Blobs'] },
+          cast: (P) => [
+            P.territory(0.42, 0.66, 560, BLUE),
+            P.house(0.2, 0.39, 74, BLUE),
+            P.house(0.86, 0.36, 60, PINK),
+            P.blob(0.83, 0.86, 2.6, PINK, { mood: 'smile', blush: true, look: [-1, -0.4] }),
+            P.blob(0.18, 0.84, 2.7, BLUE, { mood: 'grin', blush: true, look: [1, -0.4], hop: 4 }),
+            P.blob(0.48, 0.91, 1.9, BLUE, { mood: 'smile', look: [-0.2, -1] }),
+            P.glow(0.52, 0.6, 600),
+            P.blob(0.36, 0.63, 4.8, BLUE, { mood: 'grin', blush: true, flower: true, look: [1, -0.1], hop: 7, stretch: 0.05 }),
+            P.blob(0.74, 0.68, 3.4, GREY, { mood: 'ohh', blush: true, look: [-1, -0.25] }),
+            P.hearts(0.64, 0.44, 1.05),
+          ],
+        },
+        'crazygames-square': {
+          w: 800, h: 800, seed: 5,
+          title: { x: 0.5, y: 0.15, size: 132, lines: ['Mind Blobs'] },
+          cast: (P) => [
+            P.territory(0.42, 0.7, 520, BLUE),
+            P.house(0.15, 0.43, 70, BLUE),
+            P.house(0.86, 0.41, 62, PINK),
+            P.blob(0.9, 0.86, 2.3, PINK, { mood: 'smile', blush: true, look: [-1, -0.4] }),
+            P.blob(0.13, 0.82, 2.6, BLUE, { mood: 'grin', blush: true, look: [1, -0.3], hop: 4 }),
+            P.glow(0.52, 0.62, 560),
+            P.blob(0.38, 0.66, 4.7, BLUE, { mood: 'grin', blush: true, flower: true, look: [1, -0.1], hop: 7, stretch: 0.05 }),
+            P.blob(0.72, 0.71, 3.3, GREY, { mood: 'ohh', blush: true, look: [-1, -0.25] }),
+            P.hearts(0.64, 0.42, 1),
+          ],
+        },
+        // Poki: square, at least 628x628, full bleed, no text, one clear subject.
+        'poki-thumbnail': {
+          w: 1080, h: 1080, seed: 3,
+          title: null,
+          cast: (P) => [
+            P.territory(0.44, 0.6, 640, BLUE),
+            P.house(0.15, 0.16, 80, BLUE),
+            P.glow(0.47, 0.52, 620),
+            P.blob(0.4, 0.57, 6.4, BLUE, { mood: 'grin', blush: true, flower: true, look: [1, 0.2], hop: 7, stretch: 0.05 }),
+            P.blob(0.8, 0.8, 3.6, GREY, { mood: 'ohh', blush: true, look: [-1, -0.5] }),
+            P.hearts(0.77, 0.32, 1.4),
+          ],
+        },
+        // itch.io: 630x500 cover (rendered at 2x for sharp screens).
+        'itch-cover': {
+          w: 1260, h: 1000, seed: 9,
+          title: { x: 0.5, y: 0.17, size: 170, lines: ['Mind Blobs'] },
+          cast: (P) => [
+            P.territory(0.42, 0.7, 520, BLUE),
+            P.house(0.15, 0.42, 70, BLUE),
+            P.house(0.86, 0.4, 62, PINK),
+            P.blob(0.89, 0.84, 2.4, PINK, { mood: 'smile', blush: true, look: [-1, -0.4] }),
+            P.blob(0.14, 0.8, 2.6, BLUE, { mood: 'grin', blush: true, look: [1, -0.3], hop: 4 }),
+            P.blob(0.085, 0.6, 2.0, ORANGE, { mood: 'frown', brows: true, look: [1, 0.2] }),
+            P.glow(0.52, 0.62, 560),
+            P.blob(0.39, 0.66, 4.6, BLUE, { mood: 'grin', blush: true, flower: true, look: [1, -0.1], hop: 7, stretch: 0.05 }),
+            P.blob(0.69, 0.71, 3.3, GREY, { mood: 'ohh', blush: true, look: [-1, -0.25] }),
+            P.hearts(0.59, 0.4, 1),
+          ],
+        },
+      };
+
+      /** w and h override the format's size (same aspect ratio), e.g. the first frame of a 1080p video. */
+      function render(name, w, h) {
+        const fmt = FORMATS[name];
+        if (!fmt) throw new Error(`Unknown format "${name}". Try: ${Object.keys(FORMATS).join(', ')}`);
+        w ||= fmt.w;
+        h ||= fmt.h;
+        const u = Math.min(w, h) / 1080;
+        const X = (fx) => fx * w, Y = (fy) => fy * h;
+        // Blob scale 1 is the game's size (body radius 32); s is in game sizes at a 1080 frame.
+        const P = {
+          territory: (x, y, r, c) => ({ z: -2, svg: territory(X(x), Y(y), r * u, c) }),
+          glow: (x, y, r) => ({ z: -1, svg: `<circle cx="${f(X(x))}" cy="${f(Y(y))}" r="${f(r * u)}" fill="url(#glow)"/>` }),
+          house: (x, y, r, c) => ({ z: Y(y), svg: house({ x: X(x), y: Y(y), r: r * u, color: c }) }),
+          blob: (x, y, s, color, o = {}) => ({ z: Y(y), svg: blob({ x: X(x), y: Y(y), s: s * u * 1.6, color, ...o }) }),
+          hearts: (x, y, k) => {
+            const cx = X(x), cy = Y(y), q = k * u;
+            // Rising up and to the right of (x, y), so the cluster stays clear of the hero's flower.
+            const items = [
+              heart({ x: cx, y: cy, s: 4.6 * q, rot: -6 }),
+              heart({ x: cx + 92 * q, y: cy + 52 * q, s: 3 * q, rot: 14, color: '#ff8fc4' }),
+              heart({ x: cx - 62 * q, y: cy - 78 * q, s: 2.4 * q, rot: -14, color: '#ff8fc4' }),
+              heart({ x: cx + 40 * q, y: cy - 104 * q, s: 1.9 * q, rot: 8 }),
+              sparkle({ x: cx + 84 * q, y: cy - 70 * q, s: 2.4 * q }),
+              sparkle({ x: cx + 130 * q, y: cy - 10 * q, s: 1.8 * q, color: '#ffffff' }),
+              sparkle({ x: cx - 30 * q, y: cy + 86 * q, s: 1.6 * q, color: '#ffffff' }),
+            ];
+            return { z: 1e6, svg: items.join('') };
+          },
+        };
+        const layers = fmt.cast(P).sort((a, b) => a.z - b.z);
+        const t = fmt.title;
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+          ${ground(w, h, fmt.seed)}
+          ${layers.map((l) => l.svg).join('')}
+          ${t ? title({ x: X(t.x), y: Y(t.y), size: t.size * (w / fmt.w), lines: t.lines }) : ''}
+        </svg>`;
+        document.body.innerHTML = svg;
+        document.title = name;
+      }
+
+      const params = new URLSearchParams(location.search);
+      // Resolves once the cover is drawn with its font, for tools that capture the page (scripts/video.mjs).
+      window.__ready = document.fonts
+        .load('700 100px Fredoka')
+        .catch(() => {})
+        .then(() => {
+          render(params.get('format') ?? 'crazygames-landscape', +params.get('w') || 0, +params.get('h') || 0);
+          return true;
+        });
+    </script>
+  </body>
+</html>

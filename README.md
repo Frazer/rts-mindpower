@@ -67,8 +67,9 @@ There are three builds of the same game. They differ only in which portal SDK th
 `src/platform.ts` is the only file that talks to a portal:
 - **Gameplay start/stop** follow whether you're actually playing: not paused, not in a menu, not on the end screen, not watching an ad.
 - **Ad breaks (midgame)** happen only at natural breaks, when you start another game or tutorial level after the first. Never mid-match, and never on Menu/Back buttons.
-- **Rewarded ad:** a 📺 +75 button appears under the stats in real games (not tutorials) every 3 game-minutes. Watching the ad gives 75 gold.
-- **While an ad plays,** the game pauses, ignores input and goes silent.
+- **Rewarded ad (Poki only):** a 📺 +75 button appears under the stats in real games (not tutorials) every 3 game-minutes. Watching the ad gives 75 gold. The CrazyGames build doesn't show it: CrazyGames doesn't allow a reward button on the screen while you play, and Basic Launch has no ads anyway.
+- **From the moment an ad is asked for,** the game pauses and ignores taps. It goes silent when the ad actually starts, as CrazyGames asks. On Poki it goes silent straight away, because Poki's start callback can be skipped.
+- **If CrazyGames says ads are off** for the session (Basic Launch, Kids mode, offline), the game stops asking for them.
 - **Saves** (tutorial ticks, mute) use the CrazyGames cloud save on CrazyGames, and `localStorage` elsewhere.
 - **If a portal SDK fails to load** (ad blockers), the game runs as the plain web build.
 

@@ -34,6 +34,13 @@ body {
   inset: 0;
 }
 
+/* While an ad is requested or playing, the game takes no taps or clicks (the portal's ad still does). */
+body.ad-wait #game,
+body.ad-wait #hud,
+body.ad-wait #menu {
+  pointer-events: none;
+}
+
 #game canvas {
   display: block;
   touch-action: none;

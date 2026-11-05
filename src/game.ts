@@ -278,7 +278,7 @@ export class Game {
     platform.setPlaying(!this.paused && !w.outcome && !this.adHold && !this.tut?.done);
   };
 
-  /** Pause everything while an ad plays (the platform calls this). */
+  /** Pause everything and ignore input while an ad is requested or playing (the platform calls this). */
   setAdHold(on: boolean): void {
     this.adHold = on;
     if (on) {
@@ -289,8 +289,9 @@ export class Game {
     }
   }
 
+  /** Seconds until the rewarded-ad offer is ready, or null when it isn't offered (no ads, or the portal forbids it during play). */
   private giftState(): number | null {
-    if (!platform.ads || this.tut || this.world.outcome) return null;
+    if (!platform.rewardedInPlay || this.tut || this.world.outcome) return null;
     return Math.max(0, this.nextGift - this.world.time);
   }
 

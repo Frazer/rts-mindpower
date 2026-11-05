@@ -180,9 +180,12 @@
        */
       const FORMATS = {
         // CrazyGames: landscape 1920x1080, portrait 800x1200, square 800x800. Title only, no other words.
+        // zone: the top-left box (width, height as fractions) where CrazyGames lays labels like "New" or "Hot"
+        // over the cover, measured from the developer portal's preview. Keep the title out of it; &zone=1 draws it.
         'crazygames-landscape': {
           w: 1920, h: 1080, seed: 7,
-          title: { x: 0.5, y: 0.17, size: 200, lines: ['Mind Blobs'] },
+          zone: [0.406, 0.205],
+          title: { x: 0.68, y: 0.15, size: 190, lines: ['Mind Blobs'] },
           cast: (P) => [
             P.territory(0.44, 0.7, 520, BLUE),
             P.house(0.17, 0.42, 66, BLUE),
@@ -199,7 +202,8 @@
         },
         'crazygames-portrait': {
           w: 800, h: 1200, seed: 11,
-          title: { x: 0.5, y: 0.15, size: 150, lines: ['Mind', 'Blobs'] },
+          zone: [0.41, 0.102],
+          title: { x: 0.5, y: 0.225, size: 150, lines: ['Mind', 'Blobs'] },
           cast: (P) => [
             P.territory(0.42, 0.66, 560, BLUE),
             P.house(0.2, 0.39, 74, BLUE),
@@ -215,7 +219,8 @@
         },
         'crazygames-square': {
           w: 800, h: 800, seed: 5,
-          title: { x: 0.5, y: 0.15, size: 132, lines: ['Mind Blobs'] },
+          zone: [0.359, 0.307],
+          title: { x: 0.66, y: 0.2, size: 120, lines: ['Mind', 'Blobs'] },
           cast: (P) => [
             P.territory(0.42, 0.7, 520, BLUE),
             P.house(0.15, 0.43, 70, BLUE),
@@ -225,7 +230,7 @@
             P.glow(0.52, 0.62, 560),
             P.blob(0.38, 0.66, 4.7, BLUE, { mood: 'grin', blush: true, flower: true, look: [1, -0.1], hop: 7, stretch: 0.05 }),
             P.blob(0.72, 0.71, 3.3, GREY, { mood: 'ohh', blush: true, look: [-1, -0.25] }),
-            P.hearts(0.64, 0.42, 1),
+            P.hearts(0.65, 0.46, 1),
           ],
         },
         // Poki: square, at least 628x628, full bleed, no text, one clear subject.
@@ -295,6 +300,7 @@
           ${ground(w, h, fmt.seed)}
           ${layers.map((l) => l.svg).join('')}
           ${t ? title({ x: X(t.x), y: Y(t.y), size: t.size * (w / fmt.w), lines: t.lines }) : ''}
+          ${fmt.zone && params.get('zone') ? `<rect width="${f(X(fmt.zone[0]))}" height="${f(Y(fmt.zone[1]))}" fill="#6842ff" opacity="0.5"/>` : ''}
         </svg>`;
         document.body.innerHTML = svg;
         document.title = name;

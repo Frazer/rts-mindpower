@@ -217,9 +217,11 @@ window.addEventListener('keydown', (e) => {
 
 async function boot(): Promise<void> {
   await platform.init();
-  platform.onAd((on) => {
-    sound.hold('ad', on);
-    game?.setAdHold(on);
+  platform.onAd((state) => {
+    // Paused with taps blocked from the request on (portals ask for that); silent only once the ad plays.
+    sound.hold('ad', state === 'playing');
+    game?.setAdHold(state !== 'idle');
+    document.body.classList.toggle('ad-wait', state !== 'idle');
   });
   document.getElementById('boot')?.remove();
   // Portals want "loading finished" before any "gameplay start".

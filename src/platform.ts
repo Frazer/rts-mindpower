@@ -9,6 +9,12 @@
 
 export type PlatformId = 'web' | 'crazygames' | 'poki';
 
+/**
+ * Where an ad break is: 'waiting' from the request until an ad starts (game paused, input blocked,
+ * sound still on), 'playing' while it shows (also silent), 'idle' otherwise.
+ */
+export type AdState = 'idle' | 'waiting' | 'playing';
+
 /** Same shape as localStorage, so either can be used for saves. */
 export interface KeyValue {
   getItem(key: string): string | null;
@@ -27,6 +33,12 @@ interface Sdk {
   rewardedAd(started: () => void): Promise<boolean>;
   /** The portal's cloud save, if it has one. */
   storage(): KeyValue | null;
+  /** False once the portal says ads are off for this session (e.g. CrazyGames Basic Launch). */
+  adsAvailable(): boolean;
+  /** Go silent as soon as an ad is asked for, instead of when it starts (for SDKs whose start callback can be skipped). */
+  muteOnRequest: boolean;
+  /** Whether the portal allows a rewarded-ad button on the screen while you play. */
+  rewardedInPlay: boolean;
 }
 
 /** localStorage, but never throws (private windows, blocked site data, sandboxed iframes). */
@@ -56,6 +68,9 @@ const WEB: Sdk = {
   midgameAd: async () => {},
   rewardedAd: async () => false,
   storage: () => null,
+  adsAvailable: () => false,
+  muteOnRequest: false,
+  rewardedInPlay: false,
 };
 
 function loadScript(src: string): Promise<void> {
@@ -78,7 +93,7 @@ function timeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
 interface CrazyAdCallbacks {
   adStarted(): void;
   adFinished(): void;
-  adError(e: unknown): void;
+  adError(e: { code?: string; message?: string } | undefined): void;
 }
 interface CrazySdk {
   init(): Promise<void>;
@@ -88,6 +103,21 @@ interface CrazySdk {
   data: KeyValue;
 }
 const crazy = (): CrazySdk => (window as unknown as { CrazyGames: { SDK: CrazySdk } }).CrazyGames.SDK;
+
+/** Set when CrazyGames answers 'adsDisabled' (Basic Launch, Kids mode, offline): don't ask again this session. */
+let crazyAdsOff = false;
+function crazyAd(type: 'midgame' | 'rewarded', started: () => void): Promise<boolean> {
+  return new Promise((resolve) =>
+    crazy().ad.requestAd(type, {
+      adStarted: started,
+      adFinished: () => resolve(true),
+      adError: (e) => {
+        if (e?.code === 'adsDisabled') crazyAdsOff = true;
+        resolve(false);
+      },
+    }),
+  );
+}
 
 const CRAZYGAMES: Sdk = {
   async init() {
@@ -100,13 +130,14 @@ const CRAZYGAMES: Sdk = {
   gameplayStart: () => crazy().game.gameplayStart(),
   gameplayStop: () => crazy().game.gameplayStop(),
   happyTime: () => crazy().game.happytime(),
-  midgameAd: (started) =>
-    new Promise((resolve) => crazy().ad.requestAd('midgame', { adStarted: started, adFinished: () => resolve(), adError: () => resolve() })),
-  rewardedAd: (started) =>
-    new Promise((resolve) =>
-      crazy().ad.requestAd('rewarded', { adStarted: started, adFinished: () => resolve(true), adError: () => resolve(false) }),
-    ),
+  midgameAd: async (started) => void (await crazyAd('midgame', started)),
+  rewardedAd: (started) => crazyAd('rewarded', started),
   storage: () => crazy().data,
+  adsAvailable: () => !crazyAdsOff,
+  // CrazyGames: "Only mute the audio when the ad actually starts playing, and not when you request an ad."
+  muteOnRequest: false,
+  // CrazyGames: "The request button should not appear on an active gameplay screen."
+  rewardedInPlay: false,
 };
 
 // ─── Poki (SDK v2) ───
@@ -130,10 +161,13 @@ const POKI: Sdk = {
   gameplayStart: () => poki().gameplayStart(),
   gameplayStop: () => poki().gameplayStop(),
   happyTime: () => {},
-  // Poki may not call onStart for every ad, so the game is already stopped before asking.
   midgameAd: (started) => poki().commercialBreak(started),
   rewardedAd: (started) => poki().rewardedBreak(started),
   storage: () => null,
+  adsAvailable: () => true,
+  // Poki may not call onStart for every ad, so go quiet as soon as we ask.
+  muteOnRequest: true,
+  rewardedInPlay: true,
 };
 
 /**
@@ -158,13 +192,18 @@ class Platform {
   private sdk: Sdk = WEB;
   private playing = false;
   private inAd = false;
-  private adListener: (playing: boolean) => void = () => {};
+  private adListener: (state: AdState) => void = () => {};
   /** Where saves go: the portal's cloud save when it has one, else this browser. */
   storage: KeyValue = local;
 
-  /** True once a portal SDK has loaded, so ads (and the rewarded-ad button) are available. */
+  /** True when a portal SDK has loaded and hasn't said ads are off for this session. */
   get ads(): boolean {
-    return this.sdk !== WEB;
+    return this.sdk.adsAvailable();
+  }
+
+  /** Whether to offer the rewarded-ad button during play (only where the portal allows it). */
+  get rewardedInPlay(): boolean {
+    return this.ads && this.sdk.rewardedInPlay;
   }
 
   /** Load and start the portal SDK. Never fails: if the SDK is blocked or missing, the game runs without it. */
@@ -181,8 +220,8 @@ class Platform {
     }
   }
 
-  /** Called with true when an ad starts and false when it ends: mute and pause the game meanwhile. */
-  onAd(fn: (playing: boolean) => void): void {
+  /** Told when an ad break is requested, starts and ends: pause and block input unless 'idle', and go silent while 'playing'. */
+  onAd(fn: (state: AdState) => void): void {
     this.adListener = fn;
   }
 
@@ -213,22 +252,26 @@ class Platform {
   }
 
   /**
-   * Pause and mute for the whole request, not just from the SDK's "ad started" callback:
-   * Poki says that callback may not always fire, and a request that shows nothing ends at once anyway.
+   * The game is paused and input blocked for the whole request (portals ask for the UI to wait until
+   * the ad finishes or fails). Sound goes off when the ad starts, or at once where the start callback
+   * can be skipped (Poki).
    */
   private async ad<T>(show: (started: () => void) => Promise<T>): Promise<T | undefined> {
     if (!this.ads || this.inAd) return undefined;
     this.setPlaying(false);
     this.inAd = true;
-    this.adListener(true);
+    const muteNow = this.sdk.muteOnRequest;
+    this.adListener(muteNow ? 'playing' : 'waiting');
     try {
-      return await show(() => {});
+      return await show(() => {
+        if (!muteNow && this.inAd) this.adListener('playing');
+      });
     } catch (e) {
       console.warn('[platform] ad failed:', e);
       return undefined;
     } finally {
       this.inAd = false;
-      this.adListener(false);
+      this.adListener('idle');
     }
   }
 

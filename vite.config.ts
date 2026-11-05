@@ -8,5 +8,7 @@ export default defineConfig(({ mode }) => ({
   base: './',
   build: {
     outDir: PORTALS.includes(mode) ? `dist-${mode}` : 'dist',
+    // Every file next to index.html, no assets/ folder: some portal uploaders take loose files only.
+    assetsDir: '',
   },
 }));

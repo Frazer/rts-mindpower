@@ -1386,6 +1386,16 @@ kbd {
   }
 }
 
+/* Phones held sideways: too short for a panel across the bottom, so it goes down the left side
+   (the tutorial card moves right to make room). */
+@media (max-width: 700px) and (max-height: 500px) {
+  .panel {
+    right: auto;
+    width: min(300px, 48vw);
+    max-height: calc(100vh - 170px);
+  }
+}
+
 /* Pro: keep the panel clear of the minimap row */
 @media (min-width: 701px) {
   .mode-pro .build {

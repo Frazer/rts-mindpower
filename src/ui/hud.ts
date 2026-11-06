@@ -121,6 +121,9 @@ const hex = (c: number): string => '#' + c.toString(16).padStart(6, '0');
 const pct = (v: number): string => `${Math.round(v * 100)}%`;
 const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 
+/** Least height of map (CSS px) kept clear under the tutorial card on small screens. */
+const MAP_ROOM = 120;
+
 /** DOM overlay: top bar, build bar, selection panel, toasts, log, minimap, end screen. */
 export class Hud {
   private readonly top: HTMLElement;
@@ -166,10 +169,10 @@ export class Hud {
         </div>
       </div>
       <div class="tut-points"></div>
-      <div class="tut" hidden></div>
       <div class="toasts"></div>
       <div class="hint" hidden></div>
       <div class="panel" hidden></div>
+      <div class="tut" hidden></div>
       <div class="build">
         ${BUILD_MENU.map(
           (k) => `<button data-build="${k}" title="${esc(BUILDINGS[k].desc)}">
@@ -311,7 +314,10 @@ export class Hud {
           ? this.blobPanel(w, s)
           : null;
     if (!out) {
-      this.panel.hidden = true;
+      if (!this.panel.hidden) {
+        this.panel.hidden = true;
+        this.placeTut();
+      }
       this.panelKey = '';
       return;
     }
@@ -321,6 +327,7 @@ export class Hud {
       this.panelKey = out.key;
     }
     fill(this.panel, out.vals, out.widths);
+    this.placeTut();
   }
 
   private blobPanel(w: World, s: HudState): PanelOut {
@@ -575,7 +582,8 @@ export class Hud {
     if (!c) {
       this.tutEl.hidden = true;
       this.tutKey = '';
-      this.toasts.style.top = '';
+      this.toasts.style.top = this.toasts.style.left = this.toasts.style.width = '';
+      this.panel.style.maxHeight = '';
       return;
     }
     this.tutEl.hidden = false;
@@ -612,13 +620,14 @@ export class Hud {
   freeArea(): { x0: number; y0: number; x1: number; y1: number } {
     const w = this.root.clientWidth;
     const h = this.root.clientHeight;
-    const phone = w <= 700;
+    // Upright phones have the panel across the bottom; everything else has it down the left side.
+    const phone = w <= 700 && h > 500;
     const under = (el: HTMLElement): number => (el.hidden ? 0 : el.getBoundingClientRect().bottom);
     const y0 = Math.max(under(this.top), under(this.tutEl)) + 8;
     const y1 = phone ? h - 100 - 0.42 * h : h - 120;
-    const x0 = phone ? 8 : 320;
+    const x0 = phone ? 8 : w <= 700 ? Math.min(300, 0.48 * w) + 16 : 320;
     const x1 = w - (phone ? 8 : this.mode.eventLog ? 270 : 20);
-    return { x0, y0, x1, y1: Math.max(y0 + 120, y1) };
+    return { x0, y0, x1, y1: Math.max(y0 + MAP_ROOM, y1) };
   }
 
   /** Bobbing labels over things on the map, in screen px. Off-screen ones stick to the edge. */
@@ -638,12 +647,41 @@ export class Hud {
     });
   }
 
-  /** Keep the card under the top bar (which can wrap) and the toasts under the card. */
+  /**
+   * Keep the card under the top bar (which can wrap) and the toasts under the card,
+   * and keep the selection panel off the card so the instructions always show.
+   * A panel down the left side pushes the card right; a panel across the bottom
+   * (upright phones) gets shorter instead.
+   */
   private placeTut(): void {
-    if (this.tutEl.hidden) return;
-    const top = this.top.getBoundingClientRect().bottom - this.root.getBoundingClientRect().top + 6;
-    this.tutEl.style.top = `${top}px`;
-    this.toasts.style.top = `${top + this.tutEl.offsetHeight + 6}px`;
+    const card = this.tutEl;
+    if (card.hidden) return;
+    const root = this.root.getBoundingClientRect();
+    const top = this.top.getBoundingClientRect().bottom - root.top + 6;
+    card.style.top = `${top}px`;
+    card.style.left = card.style.width = '';
+    this.panel.style.maxHeight = '';
+    if (!this.panel.hidden && this.panel.offsetWidth) {
+      const w = this.root.clientWidth;
+      const p = this.panel.getBoundingClientRect();
+      if (p.width < w * 0.6) {
+        // offsetWidth ignores the pop animation's scale.
+        const right = p.right - root.left + 8;
+        if ((w - card.offsetWidth) / 2 < right) {
+          const log = this.logEl.offsetWidth ? this.logEl.getBoundingClientRect().left - root.left - 8 : w - 8;
+          const width = Math.min(440, log - right);
+          card.style.width = `${width}px`;
+          card.style.left = `${right + (log - right) / 2}px`;
+        }
+      } else {
+        // Leave a strip of map between them for the step's target; the panel scrolls.
+        const below = top + card.offsetHeight + 8 + MAP_ROOM;
+        if (p.top - root.top < below) this.panel.style.maxHeight = `${Math.max(120, p.bottom - root.top - below)}px`;
+      }
+    }
+    this.toasts.style.top = `${top + card.offsetHeight + 6}px`;
+    this.toasts.style.left = card.style.left;
+    this.toasts.style.width = card.style.width;
   }
 
   tutorialDone(d: TutDone): void {

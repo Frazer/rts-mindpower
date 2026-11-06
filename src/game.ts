@@ -183,7 +183,24 @@ export class Game {
     if (t.done) {
       this.tutDoneAt = now + 1300;
       platform.happyTime();
+    } else {
+      this.showTarget();
     }
+  }
+
+  /**
+   * On small screens a new step's target can sit under the selection panel or the
+   * tutorial card (the step that says "tap the stranger" starts as the panel opens),
+   * so bring it into the clear part of the screen.
+   */
+  private showTarget(): void {
+    const p = this.tut!.points(this.world, this.ownSelected())[0];
+    if (!p) return;
+    const a = this.hud.freeArea();
+    const s = this.r.camera.toScreen(p.x, p.y);
+    // The label sits above the point, the blob or building just below it.
+    const clear = s.x >= a.x0 + 40 && s.x <= a.x1 - 40 && s.y >= a.y0 + 40 && s.y <= a.y1 - 40;
+    if (!clear) this.jumpTo(p.x, p.y);
   }
 
   private finishTutorial(): void {

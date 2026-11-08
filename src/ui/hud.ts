@@ -264,10 +264,12 @@ export class Hud {
       share: `${Math.round((100 * me.pop) / total)}% / ${Math.round(this.mode.winShare * 100)}%`,
     }, { techp: lvl >= MAX_TECH ? 1 : (me.research - lo) / (hi - lo) });
 
-    this.score.innerHTML = w.factions
-      .filter((f) => f.isPlayer || f.pop > 0)
+    const shown = w.factions.filter((f) => f.isPlayer || f.pop > 0);
+    // Lots of teams: rivals show as just their colour (the name is in the tooltip).
+    const compact = shown.length > 5;
+    this.score.innerHTML = shown
       .map((f) => {
-        const label = f.isNeutral ? 'Wild' : f.isPlayer ? 'You' : esc(f.name);
+        const label = f.isNeutral ? 'Wild' : f.isPlayer ? 'You' : compact ? '' : esc(f.name);
         const tech = f.isNeutral ? '' : ` <small>T${f.tech}</small>`;
         return `<span class="sc" title="${esc(f.name)}"><span class="dot" style="background:${hex(f.color)}"></span>${label} <b>${f.pop}</b>${tech}</span>`;
       })

@@ -88,9 +88,16 @@ export class Game {
     this.speed = mode.defaultSpeed;
   }
 
-  static async start(mode: ModeConfig, host: HTMLElement, hudRoot: HTMLElement, cb: GameCallbacks, seed = Date.now()): Promise<Game> {
+  static async start(
+    mode: ModeConfig,
+    host: HTMLElement,
+    hudRoot: HTMLElement,
+    cb: GameCallbacks,
+    seed = Date.now(),
+    rivals?: number,
+  ): Promise<Game> {
     const tut = cb.tutorial ? new TutorialRun(cb.tutorial.level) : null;
-    const world = new World(mode, seed, tut?.worldOptions());
+    const world = new World(mode, seed, tut?.worldOptions() ?? { rivals });
     const r = await GameRenderer.create(host, world);
     let game: Game | null = null;
     const hud = new Hud(hudRoot, mode, {

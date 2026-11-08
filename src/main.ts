@@ -6,6 +6,7 @@ import { MODES, type ModeId } from './modes';
 import { platform } from './platform';
 import { completed, markCompleted, resetProgress } from './progress';
 import { findLevel, levelsFor } from './tutorials';
+import { DEFAULT_RIVALS, MAX_RIVALS, clampRivals, teamDefs } from './sim/world';
 
 const host = document.getElementById('game')!;
 const hudRoot = document.getElementById('hud')!;
@@ -38,6 +39,32 @@ window.addEventListener(
   { once: true },
 );
 finePointer.addEventListener('change', refreshMenu);
+
+// How many AI teams a normal game has. ?rivals=N overrides it for this visit.
+const RIVALS_KEY = 'mindblobs.rivals.v1';
+const rivalsParam = Number(new URLSearchParams(location.search).get('rivals'));
+let rivals = rivalsParam ? clampRivals(rivalsParam) : null;
+const getRivals = (): number => (rivals ??= clampRivals(Number(platform.storage.getItem(RIVALS_KEY)) || DEFAULT_RIVALS));
+function setRivals(n: number): void {
+  rivals = clampRivals(n);
+  platform.storage.setItem(RIVALS_KEY, String(rivals));
+}
+
+const hex = (c: number): string => `#${c.toString(16).padStart(6, '0')}`;
+
+function rivalsPicker(): string {
+  const n = getRivals();
+  const buttons = Array.from({ length: MAX_RIVALS }, (_, i) => i + 1)
+    .map((k) => `<button data-rivals="${k}" class="${k === n ? 'on' : ''}" aria-pressed="${k === n}">${k}</button>`)
+    .join('');
+  const teams = teamDefs(n).slice(2);
+  const dots = teams.map((t) => `<span class="dot" style="background:${hex(t.color)}" title="${esc(t.name)}"></span>`).join('');
+  return `<div class="rivals">
+      <span class="lbl">Rival teams</span>
+      <div class="seg" role="group" aria-label="Rival teams">${buttons}</div>
+      <span class="dots" title="${esc(teams.map((t) => t.name).join(', '))}">${dots}</span>
+    </div>`;
+}
 
 function stopGame(): void {
   game?.destroy();
@@ -85,6 +112,7 @@ function showMenu(): void {
             : ''
         }
       </div>
+      ${rivalsPicker()}
       <div class="learn ${pro ? '' : 'single'}">
         ${pro ? learnButton('casual', 'Casual tutorials') + learnButton('pro', 'Pro tutorials') : learnButton('casual', 'Tutorials')}
       </div>
@@ -102,6 +130,12 @@ function showMenu(): void {
   );
   menu.querySelectorAll<HTMLButtonElement>('[data-tuts]').forEach((b) =>
     b.addEventListener('click', () => showTutorials(b.dataset.tuts as ModeId)),
+  );
+  menu.querySelectorAll<HTMLButtonElement>('[data-rivals]').forEach((b) =>
+    b.addEventListener('click', () => {
+      setRivals(Number(b.dataset.rivals));
+      showMenu();
+    }),
   );
   bindSound();
 }
@@ -194,6 +228,7 @@ async function launch(id: ModeId, levelId?: string): Promise<void> {
       },
     },
     seed,
+    level ? undefined : getRivals(),
   );
   if (import.meta.env.DEV) (window as unknown as { __game: Game }).__game = game;
 }

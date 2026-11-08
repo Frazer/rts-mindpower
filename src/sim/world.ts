@@ -37,24 +37,80 @@ interface FactionDef {
   pos: [number, number];
 }
 
-export const FACTION_DEFS: readonly FactionDef[] = [
-  { name: 'Wanderers', color: 0xc9c2d6, neutral: true, bias: {}, pos: [0.5, 0.5] },
-  { name: 'Blue Blobs', color: 0x4fa8ff, player: true, bias: { kindness: 0.05, teaching: 0.05 }, pos: [0.2, 0.74] },
+type TeamDef = Omit<FactionDef, 'pos'>;
+
+const WANDERERS: TeamDef = { name: 'Wanderers', color: 0xc9c2d6, neutral: true, bias: {} };
+const BLUE: TeamDef = { name: 'Blue Blobs', color: 0x4fa8ff, player: true, bias: { kindness: 0.05, teaching: 0.05 } };
+
+/** AI teams, in the order they join as you add rivals. */
+const RIVAL_DEFS: readonly TeamDef[] = [
   {
     name: 'Peachy Pals',
     color: 0xff7eb6,
     ai: { weights: { school: 3, house: 2, lab: 2, market: 2, police: 1, fountain: 2 }, aggression: 0.1, diplomacy: 1 },
     bias: { kindness: 0.15, openness: 0.1, teaching: 0.1, violence: -0.15 },
-    pos: [0.8, 0.7],
   },
   {
     name: 'Grumble Gang',
     color: 0xffa43a,
     ai: { weights: { house: 3, market: 2, police: 1, lab: 1, school: 1 }, aggression: 0.9, diplomacy: 0.4 },
     bias: { strength: 0.15, violence: 0.22, kindness: -0.15, fertility: 0.1, honesty: -0.1 },
-    pos: [0.5, 0.22],
+  },
+  {
+    name: 'Minty Minds',
+    color: 0x2fb86b,
+    ai: { weights: { lab: 3, school: 2, house: 2, market: 2, police: 1, fountain: 1 }, aggression: 0.3, diplomacy: 0.7 },
+    bias: { science: 0.15, intelligence: 0.12, patience: 0.06 },
+  },
+  {
+    name: 'Cocoa Crew',
+    color: 0xa0683f,
+    ai: { weights: { house: 3, police: 2, market: 1, lab: 1, school: 1 }, aggression: 1, diplomacy: 0.3 },
+    bias: { strength: 0.18, fitness: 0.12, violence: 0.2, patience: -0.12 },
+  },
+  {
+    name: 'Lemon Drops',
+    color: 0xffd23f,
+    ai: { weights: { market: 3, house: 2, fountain: 2, school: 1, lab: 1, police: 1 }, aggression: 0.25, diplomacy: 0.9 },
+    bias: { finance: 0.15, openness: 0.12, kindness: 0.08 },
+  },
+  {
+    name: 'Plum Plotters',
+    color: 0x9d6bff,
+    ai: { weights: { house: 2, market: 2, lab: 2, police: 2, school: 1 }, aggression: 0.6, diplomacy: 0.6 },
+    bias: { intelligence: 0.1, allegiance: 0.15, honesty: -0.12 },
   },
 ];
+
+export const DEFAULT_RIVALS = 2;
+export const MAX_RIVALS = RIVAL_DEFS.length;
+
+/** The classic three-town map. */
+const CLASSIC_POS: readonly [number, number][] = [
+  [0.2, 0.74],
+  [0.8, 0.7],
+  [0.5, 0.22],
+];
+
+/**
+ * Teams for a game: wanderers, you, then `rivals` AI teams. Two rivals keep the classic
+ * layout; any other count spaces the towns evenly round the map, starting bottom-left.
+ */
+export function teamDefs(rivals = DEFAULT_RIVALS): FactionDef[] {
+  const teams = [BLUE, ...RIVAL_DEFS.slice(0, clampRivals(rivals))];
+  const n = teams.length;
+  const start = Math.atan2(0.24, -0.3);
+  const pos = (i: number): [number, number] =>
+    n === 3 ? CLASSIC_POS[i] : [0.5 + 0.36 * Math.cos(start + (i * 2 * Math.PI) / n), 0.5 + 0.33 * Math.sin(start + (i * 2 * Math.PI) / n)];
+  return [{ ...WANDERERS, pos: [0.5, 0.5] }, ...teams.map((t, i) => ({ ...t, pos: pos(i) }))];
+}
+
+export function clampRivals(n: number): number {
+  return Math.max(1, Math.min(MAX_RIVALS, Math.round(n) || DEFAULT_RIVALS));
+}
+
+/** Area grows with the number of towns, so each still has about as much room as on the classic map. */
+const roomFor = (rivals: number): number => (clampRivals(rivals) + 1) / 3;
 
 const emptyCounts = (): Record<BuildingKind, number> => ({ hall: 0, house: 0, school: 0, lab: 0, market: 0, police: 0, fountain: 0 });
 
@@ -68,6 +124,8 @@ export interface WorldOptions {
   ai?: boolean;
   /** Check for a winner (default true). */
   victory?: boolean;
+  /** AI teams on the normal map (default 2). */
+  rivals?: number;
 }
 
 export interface Outcome {
@@ -98,11 +156,16 @@ export class World {
 
   readonly aiOn: boolean;
   readonly victoryOn: boolean;
+  private readonly defs: readonly FactionDef[];
 
   constructor(readonly mode: ModeConfig, seed: number, opts: WorldOptions = {}) {
     this.rng = new Rng(seed);
-    this.w = opts.size?.[0] ?? mode.worldW;
-    this.h = opts.size?.[1] ?? mode.worldH;
+    const rivals = opts.rivals ?? DEFAULT_RIVALS;
+    const room = roomFor(rivals);
+    this.defs = teamDefs(rivals);
+    this.neutralCap = Math.round(mode.neutrals * room);
+    this.w = opts.size?.[0] ?? Math.round(mode.worldW * Math.sqrt(room));
+    this.h = opts.size?.[1] ?? Math.round(mode.worldH * Math.sqrt(room));
     this.aiOn = opts.ai ?? true;
     this.victoryOn = opts.victory ?? true;
     this.grid = new Grid(this.w, this.h);
@@ -120,8 +183,8 @@ export class World {
   // ───────────────────────────── setup ─────────────────────────────
 
   private createFactions(): void {
-    const n = FACTION_DEFS.length;
-    FACTION_DEFS.forEach((d, i) => {
+    const n = this.defs.length;
+    this.defs.forEach((d, i) => {
       this.factions.push({
         id: i,
         name: d.name,
@@ -149,7 +212,7 @@ export class World {
   private setup(): void {
     const rng = this.rng;
     const halls: Building[] = [];
-    FACTION_DEFS.forEach((d, i) => {
+    this.defs.forEach((d, i) => {
       if (d.neutral) return;
       const hx = d.pos[0] * this.w;
       const hy = d.pos[1] * this.h;
@@ -178,7 +241,7 @@ export class World {
 
     // Neutral wanderers live in camps away from the towns.
     const camps: [number, number][] = [];
-    const campCount = Math.max(4, Math.round(this.mode.neutrals / 7));
+    const campCount = Math.max(4, Math.round(this.neutralCap / 7));
     for (let tries = 0; camps.length < campCount && tries < 500; tries++) {
       const x = rng.range(120, this.w - 120);
       const y = rng.range(120, this.h - 120);
@@ -187,13 +250,12 @@ export class World {
       if (farFromTowns && farFromCamps) camps.push([x, y]);
     }
     if (camps.length === 0) camps.push([this.w / 2, this.h / 2]);
-    for (let k = 0; k < this.mode.neutrals; k++) {
+    for (let k = 0; k < this.neutralCap; k++) {
       const [cx, cy] = camps[k % camps.length];
       const a = rng.range(0, Math.PI * 2);
       const r = rng.range(0, 110);
       this.spawnBlob(NEUTRAL, cx + Math.cos(a) * r, cy + Math.sin(a) * r, randomTraits(rng), rng.range(3, 60), cx, cy);
     }
-    this.neutralCap = this.mode.neutrals;
   }
 
   spawnBlob(faction: number, x: number, y: number, traits: Traits, age: number, homeX: number, homeY: number): Blob {

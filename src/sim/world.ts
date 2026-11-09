@@ -1,6 +1,7 @@
 import type { ModeConfig } from '../modes';
-import { BUILDINGS, HALL_CAP, HOUSE_CAP, NEUTRAL, ADULT_AGE, SCHOOL_RADIUS, PLAYER, buildCost } from './config';
+import { BUILDINGS, HALL_CAP, HALL_LEVEL_CAP, HOUSE_CAP, MAX_LEVEL, NEUTRAL, ADULT_AGE, PLAYER, buildCost, schoolRadius, upgradeCost } from './config';
 import { Grid } from './grid';
+import { OBSTACLE_PAD, SIZES, type MapId, type MapSize, type Obstacle } from './maps';
 import { blobName } from './names';
 import { Rng } from './rng';
 import { randomTraits, talkScore, type TraitBias, type Traits } from './traits';
@@ -14,7 +15,7 @@ import type {
   SimEvent,
   SimEventType,
 } from './types';
-import { clamp, clamp01, dist2 } from './util';
+import { clamp, clamp01, cos, dist2, sin } from './util';
 import { behaviour } from './systems/behaviour';
 import { social } from './systems/social';
 import { violence } from './systems/violence';
@@ -40,7 +41,14 @@ interface FactionDef {
 type TeamDef = Omit<FactionDef, 'pos'>;
 
 const WANDERERS: TeamDef = { name: 'Wanderers', color: 0xc9c2d6, neutral: true, bias: {} };
-const BLUE: TeamDef = { name: 'Blue Blobs', color: 0x4fa8ff, player: true, bias: { kindness: 0.05, teaching: 0.05 } };
+const BLUE: TeamDef = {
+  name: 'Blue Blobs',
+  color: 0x4fa8ff,
+  player: true,
+  // Only used when an online game gives this team to the computer.
+  ai: { weights: { house: 2, school: 2, lab: 2, market: 2, police: 1, fountain: 1 }, aggression: 0.4, diplomacy: 0.7 },
+  bias: { kindness: 0.05, teaching: 0.05 },
+};
 
 /** AI teams, in the order they join as you add rivals. */
 const RIVAL_DEFS: readonly TeamDef[] = [
@@ -99,9 +107,10 @@ const CLASSIC_POS: readonly [number, number][] = [
 export function teamDefs(rivals = DEFAULT_RIVALS): FactionDef[] {
   const teams = [BLUE, ...RIVAL_DEFS.slice(0, clampRivals(rivals))];
   const n = teams.length;
-  const start = Math.atan2(0.24, -0.3);
+  // Bottom-left, where you start on the classic map.
+  const start = 2.4669;
   const pos = (i: number): [number, number] =>
-    n === 3 ? CLASSIC_POS[i] : [0.5 + 0.36 * Math.cos(start + (i * 2 * Math.PI) / n), 0.5 + 0.33 * Math.sin(start + (i * 2 * Math.PI) / n)];
+    n === 3 ? CLASSIC_POS[i] : [0.5 + 0.36 * cos(start + (i * 2 * Math.PI) / n), 0.5 + 0.33 * sin(start + (i * 2 * Math.PI) / n)];
   return [{ ...WANDERERS, pos: [0.5, 0.5] }, ...teams.map((t, i) => ({ ...t, pos: pos(i) }))];
 }
 
@@ -126,11 +135,59 @@ export interface WorldOptions {
   victory?: boolean;
   /** AI teams on the normal map (default 2). */
   rivals?: number;
+  /** Teams people play (default just PLAYER). The rest are run by the computer. */
+  humans?: readonly number[];
+  /** Online: players' names for their teams. */
+  names?: Readonly<Record<number, string>>;
+  /** Layout of the normal map (default meadow: open grass). */
+  map?: MapId;
+  mapSize?: MapSize;
+}
+
+/** Everything a running game needs to carry on, for catching up a player who fell out of step. */
+interface Snapshot {
+  time: number;
+  blobs: Blob[];
+  buildings: Building[];
+  factions: Faction[];
+  rng: number;
+  nextId: number;
+  victoryTimer: number;
+  housingTimer: number;
+  townTimer: number;
+  neutralCap: number;
+  outcome: Outcome | null;
+}
+
+// JSON can't hold -0, Infinity or NaN; tag them so a snapshot loads back bit for bit.
+const ODD = '~n';
+const saveNum = (_k: string, v: unknown): unknown =>
+  typeof v === 'number' && (!Number.isFinite(v) || Object.is(v, -0)) ? { [ODD]: Object.is(v, -0) ? '-0' : String(v) } : v;
+const loadNum = (_k: string, v: unknown): unknown =>
+  v && typeof v === 'object' && ODD in v ? Number((v as Record<string, string>)[ODD]) : v;
+
+/** FNV-1a over the exact bits of numbers and the characters of strings. */
+class Hasher {
+  h = 0x811c9dc5;
+  private readonly view = new DataView(new ArrayBuffer(8));
+  private mix(x: number): void {
+    this.h = Math.imul(this.h ^ x, 0x01000193) >>> 0;
+  }
+  num(v: number): void {
+    this.view.setFloat64(0, v);
+    this.mix(this.view.getUint32(0));
+    this.mix(this.view.getUint32(4));
+  }
+  str(s: string): void {
+    for (let i = 0; i < s.length; i++) this.mix(s.charCodeAt(i));
+  }
 }
 
 export interface Outcome {
   winner: number;
   reason: string;
+  /** Percent of the world the winner leads, when that's how they won. */
+  share?: number;
 }
 
 export class World {
@@ -156,14 +213,22 @@ export class World {
 
   readonly aiOn: boolean;
   readonly victoryOn: boolean;
+  readonly map: MapId;
+  /** Ponds, rocks and trees: blobs go round them, nobody builds on them. Fixed for the whole game. */
+  obstacles: Obstacle[] = [];
   private readonly defs: readonly FactionDef[];
+  private readonly humans: readonly number[];
+  private readonly names: Readonly<Record<number, string>>;
 
   constructor(readonly mode: ModeConfig, seed: number, opts: WorldOptions = {}) {
     this.rng = new Rng(seed);
     const rivals = opts.rivals ?? DEFAULT_RIVALS;
-    const room = roomFor(rivals);
+    this.map = opts.map ?? 'meadow';
+    const room = roomFor(rivals) * SIZES[opts.mapSize ?? 'medium'].area;
     this.defs = teamDefs(rivals);
-    this.neutralCap = Math.round(mode.neutrals * room);
+    this.humans = opts.humans ?? [PLAYER];
+    this.names = opts.names ?? {};
+    this.neutralCap = Math.round(mode.neutrals * room * (this.map === 'crowd' ? 1.5 : 1));
     this.w = opts.size?.[0] ?? Math.round(mode.worldW * Math.sqrt(room));
     this.h = opts.size?.[1] ?? Math.round(mode.worldH * Math.sqrt(room));
     this.aiOn = opts.ai ?? true;
@@ -187,11 +252,11 @@ export class World {
     this.defs.forEach((d, i) => {
       this.factions.push({
         id: i,
-        name: d.name,
+        name: this.names[i] ?? d.name,
         color: d.color,
-        isPlayer: !!d.player,
+        isPlayer: this.humans.includes(i),
         isNeutral: !!d.neutral,
-        ai: d.ai ?? null,
+        ai: d.neutral || this.humans.includes(i) ? null : (d.ai ?? null),
         aiTimer: 2 + i,
         policeTimer: 0,
         gold: d.neutral ? 0 : this.mode.startGold,
@@ -204,14 +269,61 @@ export class World {
         police: 0,
         cap: 0,
         counts: emptyCounts(),
+        levels: emptyCounts(),
       });
     });
+  }
+
+  /** Ponds or trees in the open ground between the towns. Meadow and Crowded Middle have none. */
+  private placeObstacles(): void {
+    if (this.map !== 'lakes' && this.map !== 'woods') return;
+    const rng = this.rng;
+    const lakes = this.map === 'lakes';
+    const halls = this.defs.filter((d) => !d.neutral).map((d) => [d.pos[0] * this.w, d.pos[1] * this.h]);
+    const area = (this.w * this.h) / (1800 * 1500);
+    const want = Math.round((lakes ? 4 : 14) * area);
+    for (let tries = 0; this.obstacles.length < want && tries < want * 60; tries++) {
+      const r = lakes ? rng.range(110, 200) : rng.range(40, 85);
+      const x = rng.range(r + 80, this.w - r - 80);
+      const y = rng.range(r + 80, this.h - r - 80);
+      // Leave every town room to grow, and a path between obstacles.
+      if (halls.some(([hx, hy]) => dist2(hx, hy, x, y) < (r + (lakes ? 330 : 270)) ** 2)) continue;
+      if (this.obstacles.some((o) => dist2(o.x, o.y, x, y) < (o.r + r + (lakes ? 120 : 70)) ** 2)) continue;
+      this.obstacles.push({ x, y, r, kind: lakes ? 'pond' : rng.chance(0.25) ? 'rock' : 'trees' });
+    }
+  }
+
+  /** The obstacle a point is inside (with `pad` to spare), if any. */
+  obstacleAt(x: number, y: number, pad = OBSTACLE_PAD): Obstacle | null {
+    for (const o of this.obstacles) if (dist2(o.x, o.y, x, y) < (o.r + pad) ** 2) return o;
+    return null;
+  }
+
+  /** The nearest point to (x, y) that's outside every obstacle. */
+  free(x: number, y: number, pad = OBSTACLE_PAD): { x: number; y: number } {
+    for (let i = 0; i < 3; i++) {
+      const o = this.obstacleAt(x, y, pad);
+      if (!o) break;
+      let dx = x - o.x;
+      let dy = y - o.y;
+      let d = Math.sqrt(dx * dx + dy * dy);
+      if (d < 1e-6) {
+        dx = 1;
+        dy = 0;
+        d = 1;
+      }
+      const k = (o.r + pad + 1) / d;
+      x = clamp(o.x + dx * k, 20, this.w - 20);
+      y = clamp(o.y + dy * k, 20, this.h - 20);
+    }
+    return { x, y };
   }
 
   /** The normal map: a town per team and camps of wanderers in between. */
   private setup(): void {
     const rng = this.rng;
     const halls: Building[] = [];
+    this.placeObstacles();
     this.defs.forEach((d, i) => {
       if (d.neutral) return;
       const hx = d.pos[0] * this.w;
@@ -225,8 +337,8 @@ export class World {
         const kid = k >= this.mode.blobsPerFaction - 2;
         const b = this.spawnBlob(
           i,
-          hx + Math.cos(a) * r,
-          hy + Math.sin(a) * r,
+          hx + cos(a) * r,
+          hy + sin(a) * r,
           randomTraits(rng, d.bias),
           kid ? rng.range(1, ADULT_AGE - 2) : rng.range(ADULT_AGE + 4, 35),
           hx,
@@ -239,29 +351,32 @@ export class World {
       if (bestCop) bestCop.role = 'police';
     });
 
-    // Neutral wanderers live in camps away from the towns.
-    const camps: [number, number][] = [];
-    const campCount = Math.max(4, Math.round(this.neutralCap / 7));
+    // Neutral wanderers live in camps away from the towns (or, on Crowded Middle, mostly in one big one).
+    const crowd = this.map === 'crowd';
+    const camps: [number, number][] = crowd ? [[this.w / 2, this.h / 2]] : [];
+    const campCount = crowd ? 3 : Math.max(4, Math.round(this.neutralCap / 7));
     for (let tries = 0; camps.length < campCount && tries < 500; tries++) {
       const x = rng.range(120, this.w - 120);
       const y = rng.range(120, this.h - 120);
       const farFromTowns = halls.every((h) => dist2(h.x, h.y, x, y) > 330 * 330);
       const farFromCamps = camps.every(([cx, cy]) => dist2(cx, cy, x, y) > 220 * 220);
-      if (farFromTowns && farFromCamps) camps.push([x, y]);
+      const clear = !this.obstacleAt(x, y, 140);
+      if (farFromTowns && farFromCamps && clear) camps.push([x, y]);
     }
     if (camps.length === 0) camps.push([this.w / 2, this.h / 2]);
     for (let k = 0; k < this.neutralCap; k++) {
-      const [cx, cy] = camps[k % camps.length];
+      // Crowded Middle: three in four wanderers live in the middle.
+      const mid = crowd && k % 4 !== 3;
+      const [cx, cy] = mid ? camps[0] : camps[k % camps.length];
       const a = rng.range(0, Math.PI * 2);
-      const r = rng.range(0, 110);
-      this.spawnBlob(NEUTRAL, cx + Math.cos(a) * r, cy + Math.sin(a) * r, randomTraits(rng), rng.range(3, 60), cx, cy);
+      const r = rng.range(0, mid ? 230 : 110);
+      this.spawnBlob(NEUTRAL, cx + cos(a) * r, cy + sin(a) * r, randomTraits(rng), rng.range(3, 60), cx, cy);
     }
   }
 
   spawnBlob(faction: number, x: number, y: number, traits: Traits, age: number, homeX: number, homeY: number): Blob {
     const rng = this.rng;
-    x = clamp(x, 20, this.w - 20);
-    y = clamp(y, 20, this.h - 20);
+    ({ x, y } = this.free(clamp(x, 20, this.w - 20), clamp(y, 20, this.h - 20)));
     const b: Blob = {
       id: this.nextId++,
       name: blobName(rng),
@@ -286,7 +401,7 @@ export class World {
       loyalty: 0,
       health: 1,
       age,
-      lifespan: 85 + traits.fitness * 25 + rng.range(-8, 8),
+      lifespan: 85 + rng.range(-8, 8),
       role: 'citizen',
       order: { kind: 'none' },
       byPlayer: false,
@@ -311,7 +426,7 @@ export class World {
   }
 
   placeBuilding(faction: number, kind: BuildingKind, x: number, y: number): Building {
-    const b: Building = { id: this.nextId++, kind, faction, x, y, focus: 'science', capture: 0, captureBy: -1 };
+    const b: Building = { id: this.nextId++, kind, faction, x, y, focus: 'science', capture: 0, captureBy: -1, level: 1 };
     this.buildings.push(b);
     this.buildingsVersion++;
     this.emit('build', x, y, { faction, text: BUILDINGS[kind].label, target: b.id });
@@ -366,6 +481,7 @@ export class World {
       f.pop = 0;
       f.police = 0;
       f.counts = emptyCounts();
+      f.levels = emptyCounts();
     }
     for (const b of this.blobs) {
       if (!b.alive) continue;
@@ -373,9 +489,12 @@ export class World {
       f.pop++;
       if (b.role === 'police') f.police++;
     }
-    for (const bl of this.buildings) this.factions[bl.faction].counts[bl.kind]++;
+    for (const bl of this.buildings) {
+      this.factions[bl.faction].counts[bl.kind]++;
+      this.factions[bl.faction].levels[bl.kind] += bl.level;
+    }
     for (const f of this.factions) {
-      f.cap = f.isNeutral ? this.neutralCap : f.counts.hall * HALL_CAP + f.counts.house * HOUSE_CAP;
+      f.cap = f.isNeutral ? this.neutralCap : f.counts.hall * HALL_CAP + (f.levels.hall - f.counts.hall) * HALL_LEVEL_CAP + f.levels.house * HOUSE_CAP;
     }
   }
 
@@ -391,36 +510,114 @@ export class World {
     this.refreshCounts();
     const total = this.blobs.length;
     if (total === 0) return;
-    const player = this.factions[PLAYER];
-    if (player.pop === 0) {
+    const humans = this.factions.filter((f) => f.isPlayer);
+    if (humans.length > 0 && humans.every((f) => f.pop === 0)) {
       const best = this.leader();
-      this.outcome = { winner: best, reason: `Your last blob is gone. ${this.factions[best].name} lead the world.` };
+      const gone = humans.length === 1 ? 'Your last blob is gone.' : 'Every player’s blobs are gone.';
+      this.outcome = { winner: best, reason: `${gone} ${this.factions[best].name} lead the world.` };
       return;
     }
     for (const f of this.factions) {
       if (f.isNeutral) continue;
       if (f.pop / total >= this.mode.winShare) {
-        this.outcome = {
-          winner: f.id,
-          reason: f.isPlayer
-            ? `Your blobs lead ${Math.round((100 * f.pop) / total)}% of the world!`
-            : `${f.name} united ${Math.round((100 * f.pop) / total)}% of the world.`,
-        };
+        const share = Math.round((100 * f.pop) / total);
+        this.outcome = { winner: f.id, share, reason: `${f.name} united ${share}% of the world.` };
         return;
       }
     }
   }
 
   leader(): number {
-    let best = PLAYER;
-    for (const f of this.factions) if (!f.isNeutral && f.pop > this.factions[best].pop) best = f.id;
+    let best = -1;
+    for (const f of this.factions) if (!f.isNeutral && (best < 0 || f.pop > this.factions[best].pop)) best = f.id;
     return best;
+  }
+
+  // ───────────────────────────── online play ─────────────────────────────
+
+  /** A fingerprint of the game state. Two players whose fingerprints differ have drifted apart. */
+  hash(): number {
+    const h = new Hasher();
+    h.num(this.time);
+    h.num(this.rng.state);
+    h.num(this.nextId);
+    for (const b of this.blobs) {
+      h.num(b.id);
+      h.num(b.faction);
+      h.num(b.x);
+      h.num(b.y);
+      h.num(b.vx);
+      h.num(b.vy);
+      h.num(b.loyalty);
+      h.num(b.health);
+      h.num(b.age);
+      h.num(b.jail);
+      h.str(b.role);
+      h.str(b.job);
+      h.str(b.order.kind);
+    }
+    for (const b of this.buildings) {
+      h.num(b.id);
+      h.num(b.faction);
+      h.str(b.kind);
+      h.num(b.capture);
+      h.num(b.level);
+    }
+    for (const f of this.factions) {
+      h.num(f.gold);
+      h.num(f.research);
+      h.num(f.tech);
+      h.num(f.reputation);
+      h.num(f.ai ? 1 : 0);
+    }
+    return h.h;
+  }
+
+  /** The whole game state as text. */
+  save(): string {
+    const s: Snapshot = {
+      time: this.time,
+      blobs: this.blobs,
+      buildings: this.buildings,
+      factions: this.factions,
+      rng: this.rng.state,
+      nextId: this.nextId,
+      victoryTimer: this.victoryTimer,
+      housingTimer: this.housingTimer,
+      townTimer: this.townTimer,
+      neutralCap: this.neutralCap,
+      outcome: this.outcome,
+    };
+    return JSON.stringify(s, saveNum);
+  }
+
+  /** Replace the game state with one from `save()` (same mode and map). */
+  load(text: string): void {
+    const s = JSON.parse(text, loadNum) as Snapshot;
+    this.time = s.time;
+    this.blobs = s.blobs;
+    this.byId.clear();
+    for (const b of this.blobs) this.byId.set(b.id, b);
+    this.buildings = s.buildings;
+    this.factions = s.factions;
+    this.rng.state = s.rng;
+    this.nextId = s.nextId;
+    this.victoryTimer = s.victoryTimer;
+    this.housingTimer = s.housingTimer;
+    this.townTimer = s.townTimer;
+    this.neutralCap = s.neutralCap;
+    this.outcome = s.outcome;
+    this.cmds.length = 0;
+    this.events = [];
+    this.buildingsVersion++;
+    this.refreshCounts();
   }
 
   // ───────────────────────────── commands ─────────────────────────────
 
   private applyCommand(c: Command): void {
     const f = this.factions[c.faction];
+    if (!f || f.isNeutral) return;
     switch (c.type) {
       case 'build': {
         const r = this.canPlace(c.faction, c.kind, c.x, c.y);
@@ -430,6 +627,16 @@ export class World {
         }
         f.gold -= buildCost(f, c.kind);
         this.placeBuilding(c.faction, c.kind, c.x, c.y);
+        return;
+      }
+      case 'upgrade': {
+        const b = this.buildings.find((x) => x.id === c.building);
+        if (!b || b.faction !== c.faction || b.level >= MAX_LEVEL) return;
+        const cost = upgradeCost(f, b);
+        if (f.gold < cost) return;
+        f.gold -= cost;
+        b.level++;
+        this.emit('upgrade', b.x, b.y, { faction: c.faction, target: b.id, text: `${BUILDINGS[b.kind].label} to level ${b.level}` });
         return;
       }
       case 'order': {
@@ -451,7 +658,7 @@ export class World {
             const a = i * 2.4;
             const r = 16 * Math.sqrt(i);
             this.endOrder(b);
-            b.order = { kind: 'move', x: clamp(c.x + Math.cos(a) * r, 20, this.w - 20), y: clamp(c.y + Math.sin(a) * r, 20, this.h - 20) };
+            b.order = { kind: 'move', x: clamp(c.x + cos(a) * r, 20, this.w - 20), y: clamp(c.y + sin(a) * r, 20, this.h - 20) };
             b.byPlayer = true;
           } else if (c.order === 'befriend' && target && target.faction !== b.faction) {
             this.endOrder(b);
@@ -546,6 +753,10 @@ export class World {
       }
       case 'gift':
         f.gold += Math.max(0, c.gold);
+        return;
+      case 'setAi':
+        // A player left (the computer takes over) or came back.
+        f.ai = c.on ? (this.defs[c.faction].ai ?? null) : null;
         return;
     }
   }
@@ -669,6 +880,8 @@ export class World {
     const def = BUILDINGS[kind];
     if (x < 50 || y < 50 || x > this.w - 50 || y > this.h - 50) return { ok: false, reason: 'Too close to the edge' };
     if (!this.inTerritory(faction, x, y)) return { ok: false, reason: 'Build inside your land' };
+    const o = this.obstacleAt(x, y, def.radius + 6);
+    if (o) return { ok: false, reason: o.kind === 'pond' ? 'Can’t build on water' : o.kind === 'rock' ? 'Can’t build on rocks' : 'Can’t build in the trees' };
     for (const o of this.buildings) {
       const min = def.radius + BUILDINGS[o.kind].radius + 8;
       if (dist2(o.x, o.y, x, y) < min * min) return { ok: false, reason: 'Too close to another building' };
@@ -693,8 +906,11 @@ export class World {
 
   hasSchoolNear(faction: number, x: number, y: number): boolean {
     if (faction === NEUTRAL || this.factions[faction].counts.school === 0) return false;
-    const rr = SCHOOL_RADIUS * SCHOOL_RADIUS;
-    return this.buildings.some((b) => b.kind === 'school' && b.faction === faction && dist2(b.x, b.y, x, y) <= rr);
+    return this.buildings.some((b) => {
+      if (b.kind !== 'school' || b.faction !== faction) return false;
+      const r = schoolRadius(b);
+      return dist2(b.x, b.y, x, y) <= r * r;
+    });
   }
 
   convert(b: Blob, to: number, how: 'talk' | 'fear'): void {

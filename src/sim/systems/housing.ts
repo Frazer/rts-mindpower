@@ -6,6 +6,8 @@ import type { World } from '../world';
 /** How many blobs each kind of building is "home" to. Spreads a town out over all its buildings. */
 const HOME_CAP: Record<BuildingKind, number> = { hall: 10, house: 5, school: 4, lab: 3, market: 3, fountain: 2, police: 1 };
 const MOVES_PER_PASS = 6;
+/** A levelled-up building is home to more blobs, the same as if there were more of it. */
+const homeCap = (h: Building): number => HOME_CAP[h.kind] * h.level;
 
 const homes = new Map<number, Building>();
 const counts = new Map<number, number>();
@@ -44,7 +46,7 @@ export function housing(w: World, dt: number): void {
       let worstFill = 0;
       for (const h of homes.values()) {
         if (h.faction !== f.id) continue;
-        const fill = counts.get(h.id)! / HOME_CAP[h.kind];
+        const fill = counts.get(h.id)! / homeCap(h);
         if (fill > worstFill) {
           worstFill = fill;
           worst = h;
@@ -52,7 +54,7 @@ export function housing(w: World, dt: number): void {
       }
       const best = emptiest(f.id, worst?.x ?? 0, worst?.y ?? 0);
       if (!worst || !best || best === worst) break;
-      const bestFill = (counts.get(best.id)! + 1) / HOME_CAP[best.kind];
+      const bestFill = (counts.get(best.id)! + 1) / homeCap(best);
       if (worstFill - bestFill < 0.5) break;
       const mover = w.blobs.find((b) => b.alive && b.home === worst!.id && b.role !== 'police' && b.order.kind === 'none');
       if (!mover) break;
@@ -68,7 +70,7 @@ function emptiest(faction: number, x: number, y: number): Building | null {
   for (const h of homes.values()) {
     if (h.faction !== faction) continue;
     // Fill ratio first; distance only breaks near-ties.
-    const score = (counts.get(h.id)! + 1) / HOME_CAP[h.kind] + Math.sqrt(dist2(h.x, h.y, x, y)) / 4000;
+    const score = (counts.get(h.id)! + 1) / homeCap(h) + Math.sqrt(dist2(h.x, h.y, x, y)) / 4000;
     if (score < bestScore) {
       bestScore = score;
       best = h;

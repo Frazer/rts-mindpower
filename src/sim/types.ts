@@ -1,6 +1,6 @@
 import type { TraitKey, Traits } from './traits';
 
-export type Job = 'social' | 'teacher' | 'recruiter';
+export type Job = 'social' | 'teacher' | 'recruiter' | 'student';
 
 export type Role = 'citizen' | 'police' | 'ambassador';
 export type Mood = 'calm' | 'happy' | 'angry' | 'scared' | 'sad';
@@ -48,6 +48,7 @@ export interface Blob {
   loyalty: number;
   health: number;
   age: number;
+  /** Years it would live with no fitness at all: see lifeLength. */
   lifespan: number;
   role: Role;
   order: Order;
@@ -86,6 +87,8 @@ export interface Building {
   captureBy: number;
   /** School only: trait it teaches. */
   focus: TraitKey;
+  /** 1 to MAX_LEVEL, bought with gold. */
+  level: number;
 }
 
 export interface AiPersonality {
@@ -129,6 +132,8 @@ export interface Faction {
   police: number;
   cap: number;
   counts: Record<BuildingKind, number>;
+  /** Total levels across each kind of building (a level 3 market counts for 3). */
+  levels: Record<BuildingKind, number>;
 }
 
 export type SimEventType =
@@ -148,6 +153,7 @@ export type SimEventType =
   | 'birth'
   | 'death'
   | 'build'
+  | 'upgrade'
   | 'tech'
   | 'recruit'
   | 'notice';
@@ -172,6 +178,7 @@ export type OrderCommand = 'move' | 'befriend' | 'attack' | 'teach' | 'usurp' | 
 export type Command =
   | { type: 'order'; faction: number; ids: number[]; order: OrderCommand; x?: number; y?: number; target?: number; building?: number }
   | { type: 'build'; faction: number; kind: BuildingKind; x: number; y: number }
+  | { type: 'upgrade'; faction: number; building: number }
   | { type: 'autoBefriend'; faction: number; target: number; count?: number }
   | { type: 'befriendArea'; faction: number; ids: number[]; x: number; y: number; r: number; target?: number }
   | { type: 'job'; faction: number; ids: number[]; job: Job }
@@ -179,4 +186,6 @@ export type Command =
   | { type: 'autoAttack'; faction: number; target: number }
   | { type: 'focus'; faction: number; building: number; trait: TraitKey }
   /** Gold from outside the sim (a rewarded ad). */
-  | { type: 'gift'; faction: number; gold: number };
+  | { type: 'gift'; faction: number; gold: number }
+  /** Online: the computer takes over a team whose player left, or hands it back. */
+  | { type: 'setAi'; faction: number; on: boolean };

@@ -1,4 +1,4 @@
-import { BUILDINGS, FOUNTAIN_RADIUS, NEUTRAL, USURP_MIN, USURP_RADIUS } from '../config';
+import { BUILDINGS, NEUTRAL, USURP_MIN, USURP_RADIUS, fountainRadius, levelSpeed } from '../config';
 import type { Blob } from '../types';
 import { clamp01 } from '../util';
 import type { World } from '../world';
@@ -19,12 +19,12 @@ function fountains(w: World): void {
   for (const f of w.buildings) {
     if (f.kind !== 'fountain' || f.faction === NEUTRAL) continue;
     const owner = w.factions[f.faction];
-    w.grid.query(f.x, f.y, FOUNTAIN_RADIUS, near);
+    w.grid.query(f.x, f.y, fountainRadius(f), near);
     for (const b of near) {
       if (b.faction === f.faction || b.role === 'police' || b.jail > 0 || !b.alive) continue;
       const grudge = w.factions[b.faction].grudge[f.faction] ?? 0;
-      const pull = 0.02 * (0.5 + owner.reputation) * (1 + 0.05 * owner.tech) * w.mode.conversionMult * (1 - 0.75 * grudge);
-      const receptivity = 0.35 + 0.65 * b.traits.openness;
+      const pull = 0.02 * (0.5 + owner.reputation) * (1 + 0.05 * owner.tech) * w.mode.conversionMult * (1 - 0.75 * grudge) * levelSpeed(f);
+      const receptivity = 0.35 + 0.65 * Math.min(1, b.traits.openness);
       b.loyalty -= pull * receptivity * STEP * 2;
       if (b.loyalty <= 0) {
         w.convert(b, f.faction, 'talk');
@@ -61,8 +61,8 @@ function usurping(w: World): void {
         bld.capture = 0;
         w.emit('usurping', bld.x, bld.y, { faction: att, other: bld.faction, target: bld.id, text: BUILDINGS[bld.kind].label });
       }
-      // Bigger crowds are faster; town halls hold out much longer.
-      const rate = 0.025 * Math.min(net, 8) * (bld.kind === 'hall' ? 0.3 : 1);
+      // Bigger crowds are faster; town halls hold out much longer, and so do levelled-up buildings.
+      const rate = (0.025 * Math.min(net, 8) * (bld.kind === 'hall' ? 0.3 : 1)) / (1 + 0.3 * (bld.level - 1));
       bld.capture = clamp01(bld.capture + rate * STEP);
       if (bld.capture >= 1) w.usurp(bld, att);
     } else if (bld.capture > 0) {

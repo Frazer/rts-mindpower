@@ -3,17 +3,19 @@ import {
   ADULT_AGE,
   BUILD_MENU,
   BUILDINGS,
+  MAX_LEVEL,
   MAX_TECH,
   NEUTRAL,
-  FOUNTAIN_RADIUS,
   PLAYER,
-  SCHOOL_RADIUS,
   buildCost,
+  fountainRadius,
   policeDetectRadius,
   policeSkill,
+  schoolRadius,
   techThreshold,
+  upgradeCost,
 } from '../sim/config';
-import { NEGATIVE_TRAITS, TRAITS, TRAIT_INFO, talkScore, type TraitKey } from '../sim/traits';
+import { NEGATIVE_TRAITS, SKILL_MAX, TRAITS, TRAIT_INFO, gradeOf, skillShare, talkScore, type TraitKey } from '../sim/traits';
 import type { Blob, Building, BuildingKind, Job } from '../sim/types';
 import type { World } from '../sim/world';
 import type { Progress } from '../tutorials';
@@ -25,6 +27,7 @@ export type PanelAction =
   | 'usurp'
   | 'move'
   | 'stop'
+  | 'upgrade'
   | 'nearby'
   | 'sendFriend'
   | 'sendBonker'
@@ -51,6 +54,9 @@ export const TEAM_TABS: readonly TabDef[] = [
   { key: 'hot', icon: '😠', label: 'Hot heads', desc: 'Most likely to start fights. Send teachers to calm them down.', score: (b) => b.traits.violence, act: 'teachThem' },
 ];
 
+/** "Select top N" buttons on the Team panel. */
+const TOP_PICKS = [5, 10, 20, 50] as const;
+
 export const JOBS: Record<Job, { icon: string; label: string; desc: string }> = {
   social: {
     icon: '💬',
@@ -59,6 +65,11 @@ export const JOBS: Record<Job, { icon: string; label: string; desc: string }> = 
   },
   teacher: { icon: '🎓', label: 'Teacher', desc: 'Keeps teaching the nearby teammates it can help most.' },
   recruiter: { icon: '🌸', label: 'Recruiter', desc: 'Keeps befriending the strangers nearest to it.' },
+  student: {
+    icon: '🎒',
+    label: 'Student',
+    desc: 'Stays at your nearest school and studies what it teaches. This is how blobs become excellent, but it takes years, and they earn less and have fewer babies meanwhile.',
+  },
 };
 
 export interface HudHandlers {
@@ -75,6 +86,7 @@ export interface HudHandlers {
   teamPick(id: number): void;
   teamAct(act: TeamAct, ids: number[]): void;
   sound(): void;
+  buildingView(): void;
   /** Watch a rewarded ad for gold. */
   gift(): void;
 }
@@ -105,6 +117,7 @@ export interface HudState {
   building: Building | null;
   buildMode: BuildingKind | null;
   command: CommandMode;
+  buildingView: boolean;
   speed: number;
   paused: boolean;
   team: TeamTab | null;
@@ -124,13 +137,40 @@ const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt
 /** Least height of map (CSS px) kept clear under the tutorial card on small screens. */
 const MAP_ROOM = 120;
 
+type ToastKind = 'good' | 'bad' | 'info';
+
+/** A message in the corner. */
+interface Note {
+  el: HTMLElement;
+  text: string;
+  many?: (n: number) => string;
+  /** Has to be read, so ordinary news doesn't take its place while it's big. */
+  must: boolean;
+  big: boolean;
+  count: number;
+  timer: number;
+}
+
+/** This many messages within BUSY_MS and new ones go straight to a small line. */
+const BUSY_COUNT = 2;
+const BUSY_MS = 6000;
+const MAX_NOTES = 5;
+const SMALL_MS = 3500;
+/** How long a message stays big: long enough to read. */
+const bigMs = (text: string): number => Math.min(6000, Math.max(2400, 1600 + text.length * 45));
+
 /** DOM overlay: top bar, build bar, selection panel, toasts, log, minimap, end screen. */
 export class Hud {
+  /** Your team (another team in an online game). */
+  me = PLAYER;
   private readonly top: HTMLElement;
   private readonly score: HTMLElement;
   private readonly panel: HTMLElement;
   private readonly buildBar: HTMLElement;
   private readonly toasts: HTMLElement;
+  /** Messages on screen, newest first, and when recent ones arrived. */
+  private notes: Note[] = [];
+  private noteTimes: number[] = [];
   private readonly hintEl: HTMLElement;
   private readonly logEl: HTMLElement;
   private readonly mini: HTMLCanvasElement;
@@ -163,6 +203,7 @@ export class Hud {
         <div class="ctrl">
           ${mode.speeds.map((s) => `<button data-speed="${s}">${s}×</button>`).join('')}
           <button data-team class="team" title="Your team: find your best blobs and give them jobs${keys ? ' (Tab)' : ''}">👥<span> Team</span></button>
+          <button data-bview title="Buildings view: fade the blobs so you can see and click just the buildings${keys ? ' (B)' : ''}">🏘️</button>
           <button data-pause title="Pause${keys ? ' (Space)' : ''}">⏸</button>
           <button data-sound title="Sound on/off${keys ? ' (M)' : ''}">🔊</button>
           <button data-menu title="Menu">☰</button>
@@ -209,6 +250,7 @@ export class Hud {
       else if ('pause' in t.dataset) h.pause();
       else if ('team' in t.dataset) h.team(this.teamOpen ? null : 'charm');
       else if ('sound' in t.dataset) h.sound();
+      else if ('bview' in t.dataset) h.buildingView();
       else if ('gift' in t.dataset) h.gift();
       else if ('menu' in t.dataset) h.menu();
     });
@@ -251,7 +293,7 @@ export class Hud {
   // ───────────────────────────── per update (~5 Hz) ─────────────────────────────
 
   update(w: World, s: HudState): void {
-    const me = w.factions[PLAYER];
+    const me = w.factions[this.me];
     const total = Math.max(1, w.blobs.length);
     const lvl = me.tech;
     const lo = techThreshold(lvl);
@@ -264,12 +306,12 @@ export class Hud {
       share: `${Math.round((100 * me.pop) / total)}% / ${Math.round(this.mode.winShare * 100)}%`,
     }, { techp: lvl >= MAX_TECH ? 1 : (me.research - lo) / (hi - lo) });
 
-    const shown = w.factions.filter((f) => f.isPlayer || f.pop > 0);
+    const shown = w.factions.filter((f) => f.id === this.me || f.pop > 0);
     // Lots of teams: rivals show as just their colour (the name is in the tooltip).
     const compact = shown.length > 5;
     this.score.innerHTML = shown
       .map((f) => {
-        const label = f.isNeutral ? 'Wild' : f.isPlayer ? 'You' : compact ? '' : esc(f.name);
+        const label = f.isNeutral ? 'Wild' : f.id === this.me ? 'You' : compact ? '' : esc(f.name);
         const tech = f.isNeutral ? '' : ` <small>T${f.tech}</small>`;
         return `<span class="sc" title="${esc(f.name)}"><span class="dot" style="background:${hex(f.color)}"></span>${label} <b>${f.pop}</b>${tech}</span>`;
       })
@@ -281,6 +323,7 @@ export class Hud {
     const pauseBtn = this.top.querySelector<HTMLButtonElement>('[data-pause]')!;
     this.teamOpen = s.team !== null;
     this.top.querySelector<HTMLButtonElement>('[data-team]')!.classList.toggle('on', this.teamOpen);
+    this.top.querySelector<HTMLButtonElement>('[data-bview]')!.classList.toggle('on', s.buildingView);
     pauseBtn.classList.toggle('on', s.paused);
     pauseBtn.textContent = s.paused ? '▶' : '⏸';
     const soundBtn = this.top.querySelector<HTMLButtonElement>('[data-sound]')!;
@@ -303,7 +346,7 @@ export class Hud {
     }
 
     // On phones the panel would cover the map while you pick a target, so it steps aside.
-    this.root.classList.toggle('picking', !!(s.command || s.buildMode));
+    this.root.classList.toggle('picking', !!(s.command || s.buildMode || (s.buildingView && s.selected.length && !s.team)));
     this.renderPanel(w, s);
   }
 
@@ -336,7 +379,7 @@ export class Hud {
     const blobs = s.selected;
     const b = blobs[0];
     const f = w.factions[b.faction];
-    const own = b.faction === PLAYER;
+    const own = b.faction === this.me;
     const keys = this.mode.hotkeys;
     const vals: Record<string, string> = {};
     const widths: Record<string, number> = {};
@@ -364,15 +407,16 @@ export class Hud {
     } else {
       head = `<span class="dot" style="background:${hex(f.color)}"></span><b>${blobs.length} blobs</b>`;
       sub = `${esc(f.name)} · <span data-v="status"></span>`;
-      const busy = blobs.filter((x) => x.order.kind !== 'none').length;
-      vals.status = `${busy} busy`;
+      const students = blobs.filter((x) => x.job === 'student').length;
+      const busy = blobs.filter((x) => x.job !== 'student' && x.order.kind !== 'none').length;
+      vals.status = [busy || !students ? `${busy} busy` : '', students ? `${students} studying 🎒` : ''].filter(Boolean).join(' · ');
     }
 
     const avg = (fn: (x: Blob) => number): number => blobs.reduce((a, x) => a + fn(x), 0) / blobs.length;
     widths.loy = avg((x) => x.loyalty);
     widths.hp = avg((x) => x.health);
-    widths.charm = avg((x) => talkScore(x.traits));
-    widths.power = avg((x) => (x.traits.strength + x.traits.fitness) / 2);
+    widths.charm = avg((x) => talkScore(x.traits)) / SKILL_MAX;
+    widths.power = avg((x) => (x.traits.strength + x.traits.fitness) / 2) / SKILL_MAX;
     const meters = `
       <div class="meters">
         ${meter('🛡️ Loyalty', 'loy', 'Below zero, they switch teams')}
@@ -388,7 +432,7 @@ export class Hud {
         (t) => `<div class="tr ${NEGATIVE_TRAITS.has(t.key) ? 'neg' : ''}" title="${t.label}: ${t.effect}"><span>${t.icon}</span><span class="tl">${t.label}</span><i class="bar"><i data-w="t-${t.key}"></i></i><b data-v="t-${t.key}"></b></div>`,
       ).join('')}</div>`;
       for (const t of TRAITS) {
-        const v = avg((x) => x.traits[t.key]);
+        const v = skillShare(t.key, avg((x) => x.traits[t.key]));
         widths[`t-${t.key}`] = v;
         vals[`t-${t.key}`] = `${Math.round(v * 100)}`;
       }
@@ -396,10 +440,11 @@ export class Hud {
       const ranked = TRAITS.filter((t) => !NEGATIVE_TRAITS.has(t.key))
         .map((t) => ({ t, v: avg((x) => x.traits[t.key]) }))
         .sort((a, z) => z.v - a.v)
-        .slice(0, 3);
+        .slice(0, 3)
+        .map((r) => ({ ...r, grade: gradeOf(skillShare(r.t.key, r.v)) }));
       const hot = avg((x) => x.traits.violence) > 0.6;
-      traitKey = ranked.map((r) => r.t.key).join(',') + (hot ? ',hot' : '');
-      traits = `<div class="chips"><span class="clbl">Best at</span>${ranked.map((r) => `<span class="tchip" title="${r.t.label}: ${r.t.effect}">${r.t.icon} ${r.t.adj}</span>`).join('')}${
+      traitKey = ranked.map((r) => r.t.key + r.grade).join(',') + (hot ? ',hot' : '');
+      traits = `<div class="chips"><span class="clbl">Best at</span>${ranked.map((r) => `<span class="tchip" title="${r.t.label}: ${r.t.effect}">${r.t.icon} ${r.t.label} · ${r.grade}</span>`).join('')}${
         hot ? `<span class="tchip neg">😠 Hot-headed</span>` : ''
       }</div>`;
     }
@@ -451,25 +496,27 @@ export class Hud {
 
   private teamPanel(w: World, tab: TeamTab): PanelOut {
     const def = TEAM_TABS.find((t) => t.key === tab) ?? TEAM_TABS[0];
-    const mine = w.blobs.filter((b) => b.alive && b.faction === PLAYER && b.role !== 'police');
+    const mine = w.blobs.filter((b) => b.alive && b.faction === this.me && b.role !== 'police');
     // Re-rank every couple of seconds so rows don't jump around under your finger.
     const c = this.teamCache;
-    if (c.tab !== tab || w.time - c.t > 2 || c.ids.some((id) => !w.byId.get(id) || w.byId.get(id)!.faction !== PLAYER)) {
+    if (c.tab !== tab || w.time - c.t > 2 || c.ids.some((id) => !w.byId.get(id) || w.byId.get(id)!.faction !== this.me)) {
       c.tab = tab;
       c.t = w.time;
-      c.ids = [...mine].sort((a, z) => def.score(z) - def.score(a)).slice(0, this.mode.showNumbers ? 8 : 6).map((b) => b.id);
+      c.ids = [...mine].sort((a, z) => def.score(z) - def.score(a)).slice(0, TOP_PICKS[TOP_PICKS.length - 1]).map((b) => b.id);
     }
+    const shown = c.ids.slice(0, this.mode.showNumbers ? 8 : 6);
     const vals: Record<string, string> = {};
     const widths: Record<string, number> = {};
     const teachers = mine.filter((b) => b.job === 'teacher').length;
     const recruiters = mine.filter((b) => b.job === 'recruiter').length;
+    vals.stu = `${mine.filter((b) => b.job === 'student').length}`;
     vals.tch = `${teachers}`;
     vals.rec = `${recruiters}`;
-    vals.les = `${w.factions[PLAYER].stats.lessons}`;
-    const rows = c.ids
+    vals.les = `${w.factions[this.me].stats.lessons}`;
+    const rows = shown
       .map((id, i) => {
         const b = w.byId.get(id)!;
-        const v = def.score(b);
+        const v = def.score(b) / (tab === 'hot' ? 1 : SKILL_MAX);
         widths[`r${i}`] = v;
         vals[`r${i}`] = `${Math.round(v * 100)}`;
         vals[`j${i}`] = b.job !== 'social' ? JOBS[b.job].icon : b.jail > 0 ? '🔒' : b.age < ADULT_AGE ? '🍼' : '';
@@ -480,38 +527,51 @@ export class Hud {
       })
       .join('');
     const actBtn: Record<TeamAct, string> = {
-      select: `<button data-team-act="select" data-n="5" title="Select the top 5, then tap Befriend and tap a crowd">👆 Select top 5</button>`,
+      select: `<div class="top-picks"><span>👆 Select top</span>${TOP_PICKS.map((n) => `<button data-team-act="select" data-n="${n}" title="Select your best ${n}, then give them something to do">${n}</button>`).join('')}</div>`,
       teacher: `<button data-team-act="teacher" data-n="3" class="teach">🎓 Make top 3 Teachers</button>`,
       recruiter: `<button data-team-act="recruiter" data-n="3" class="good">🌸 Make top 3 Recruiters</button>`,
       teachThem: `<button data-team-act="teachThem" data-n="3" class="teach">📚 Send teachers to top 3</button>`,
     };
     const html = `<div class="p-head"><b>👥 Your team</b><span class="tag">${mine.length} blobs</span><button class="x" data-team-close title="Close">✕</button></div>
-      <div class="p-sub">🎓 <span data-v="tch"></span> teachers · 🌸 <span data-v="rec"></span> recruiters · 📚 <span data-v="les"></span> lessons given</div>
+      <div class="p-sub">🎓 <span data-v="tch"></span> teachers · 🎒 <span data-v="stu"></span> students · 🌸 <span data-v="rec"></span> recruiters · 📚 <span data-v="les"></span> lessons</div>
       <div class="tabs">${TEAM_TABS.map((t) => `<button data-tab="${t.key}" class="${t.key === tab ? 'on' : ''}">${t.icon} ${t.label}</button>`).join('')}</div>
       <p class="note dim">${def.desc}</p>
+      <div class="acts">${actBtn.select}</div>
       <div class="roster">${rows || '<p class="note">No blobs yet.</p>'}</div>
-      <div class="acts">${actBtn.select}${def.act ? actBtn[def.act] : ''}</div>`;
-    return { key: `team|${tab}|${c.ids.join(',')}`, html, vals, widths };
+      ${def.act ? `<div class="acts">${actBtn[def.act]}</div>` : ''}`;
+    return { key: `team|${tab}|${shown.join(',')}`, html, vals, widths };
   }
 
   private buildingPanel(w: World, b: Building): PanelOut {
     const def = BUILDINGS[b.kind];
     const f = w.factions[b.faction];
-    const own = b.faction === PLAYER;
+    const own = b.faction === this.me;
     const vals: Record<string, string> = {};
     const widths: Record<string, number> = {};
-    let body = `<p class="note">${esc(def.desc)}</p>`;
+    const cost = upgradeCost(f, b);
+    const canLevel = own && b.level < MAX_LEVEL;
+    const poor = canLevel && f.gold < cost;
+    vals.upcost = `${cost}`;
+    let body = `<p class="note">${esc(def.desc)}</p>
+      <div class="level"><span class="stars" title="Level ${b.level} of ${MAX_LEVEL}">${'★'.repeat(b.level)}${'☆'.repeat(MAX_LEVEL - b.level)}</span>${
+        canLevel
+          ? `<button data-a="upgrade" class="${poor ? 'poor' : ''}" title="Pay gold to raise this building a level">⬆️ Level up <i class="coin"></i><b data-v="upcost"></b>${this.mode.hotkeys ? '<kbd>V</kbd>' : ''}</button>`
+          : own
+            ? '<span class="tag">Max level</span>'
+            : ''
+      }</div>`;
+    if (canLevel) body += `<p class="note dim">Next level: ${def.nextLevel}. Harder to take over.</p>`;
     if (b.capture > 0 && b.captureBy >= 0) {
       const by = w.factions[b.captureBy];
       body += `<div class="meter capture" title="Outnumber the blobs standing here to take it over"><span>🏳️ ${
-        own ? 'Being taken by' : b.captureBy === PLAYER ? 'You are taking it' : 'Being taken by'
-      } ${b.captureBy === PLAYER ? '' : esc(by.name)}</span><i class="bar"><i data-w="cap"></i></i></div>`;
+        own ? 'Being taken by' : b.captureBy === this.me ? 'You are taking it' : 'Being taken by'
+      } ${b.captureBy === this.me ? '' : esc(by.name)}</span><i class="bar"><i data-w="cap"></i></i></div>`;
       widths.cap = b.capture;
       if (own) body += `<p class="note">⚠️ Send blobs to stand here: more of yours than theirs stops it.</p>`;
     }
     if (b.kind === 'fountain') {
       let visitors = 0;
-      for (const x of w.blobs) if (x.faction !== b.faction && x.role !== 'police' && (x.x - b.x) ** 2 + (x.y - b.y) ** 2 < FOUNTAIN_RADIUS ** 2) visitors++;
+      for (const x of w.blobs) if (x.faction !== b.faction && x.role !== 'police' && (x.x - b.x) ** 2 + (x.y - b.y) ** 2 < fountainRadius(b) ** 2) visitors++;
       body += `<p class="note">💗 <b data-v="visitors"></b> strangers being befriended now</p>`;
       vals.visitors = `${visitors}`;
     }
@@ -532,8 +592,9 @@ export class Hud {
     } else if (b.kind === 'school') {
       const opts = this.mode.showNumbers ? TRAITS.filter((t) => !NEGATIVE_TRAITS.has(t.key)).map((t) => t.key) : CASUAL_FOCUS;
       let learners = 0;
-      for (const x of w.blobs) if (x.faction === b.faction && (x.x - b.x) ** 2 + (x.y - b.y) ** 2 < SCHOOL_RADIUS ** 2) learners++;
-      body += `<p class="note">📚 <b data-v="learners"></b> blobs learning here now</p>`;
+      for (const x of w.blobs) if (x.faction === b.faction && (x.x - b.x) ** 2 + (x.y - b.y) ** 2 < schoolRadius(b) ** 2) learners++;
+      body += `<p class="note">📚 <b data-v="learners"></b> blobs learning here now</p>
+        <p class="note dim">Being nearby only makes a blob decent. To make one excellent, give it the 🎒 Student job. It takes years, and kids learn twice as fast.</p>`;
       vals.learners = `${learners}`;
       body += own
         ? `<p class="note"><b>Pick what it teaches:</b></p><div class="focus">${opts
@@ -545,21 +606,82 @@ export class Hud {
         : `<p class="note">Teaching: ${TRAIT_INFO[b.focus].icon} ${TRAIT_INFO[b.focus].label} · ${TRAIT_INFO[b.focus].effect}</p>`;
     }
     const html = `<div class="p-head"><span class="ico">${def.icon}</span><b>${def.label}</b><span class="tag" style="background:${hex(f.color)}55">${esc(
-      f.isPlayer ? 'Yours' : f.name,
+      f.id === this.me ? 'Yours' : f.name,
     )}</span></div>${body}`;
-    return { key: `bld|${b.id}|${b.focus}|${b.faction}|${b.captureBy}|${b.capture > 0}`, html, vals, widths };
+    return { key: `bld|${b.id}|${b.focus}|${b.faction}|${b.captureBy}|${b.capture > 0}|${b.level}|${poor}`, html, vals, widths };
   }
 
   // ───────────────────────────── messages ─────────────────────────────
 
-  toast(text: string, kind: 'good' | 'bad' | 'info' = 'info'): void {
+  /**
+   * News, in the corner: big while things are quiet, then it shrinks to a small line.
+   * When a lot is happening it's a small line from the start. `many` is for news that
+   * comes in bursts: they share one line with a running count.
+   */
+  toast(text: string, kind: ToastKind = 'info', many?: (n: number) => string): void {
+    this.post(text, kind, false, many);
+  }
+
+  /** Something the player has to read (a tip, or why that didn't work): big however busy it is. */
+  say(text: string, kind: ToastKind = 'info'): void {
+    this.post(text, kind, true);
+  }
+
+  private post(text: string, kind: ToastKind, must: boolean, many?: (n: number) => string): void {
+    const same = this.notes.find((n) => (many ? n.many === many : !n.many && n.text === text));
+    if (same) {
+      same.count++;
+      same.el.textContent = many ? many(same.count) : `${text} ×${same.count}`;
+      same.el.classList.remove('out');
+      if (must) this.setBig(same, true);
+      this.startClock(same);
+      return;
+    }
+
+    const now = performance.now();
+    this.noteTimes = this.noteTimes.filter((at) => now - at < BUSY_MS);
+    const quiet = this.noteTimes.length < BUSY_COUNT;
+    this.noteTimes.push(now);
+    const big = must || (quiet && !this.notes.some((n) => n.big && n.must));
+    // Only the newest is big.
+    if (big) for (const n of this.notes) if (n.big) this.shrink(n);
+
     const el = document.createElement('div');
     el.className = `toast ${kind}`;
     el.textContent = text;
     this.toasts.prepend(el);
-    while (this.toasts.children.length > 4) this.toasts.lastElementChild!.remove();
-    setTimeout(() => el.classList.add('out'), 2800);
-    setTimeout(() => el.remove(), 3300);
+    const note: Note = { el, text, many, must, big: false, count: 1, timer: 0 };
+    this.setBig(note, big);
+    this.notes.unshift(note);
+    this.startClock(note);
+    while (this.notes.length > MAX_NOTES) this.dropNote(this.notes[this.notes.length - 1]);
+  }
+
+  private setBig(n: Note, big: boolean): void {
+    n.big = big;
+    n.el.classList.toggle('small', !big);
+  }
+
+  private startClock(n: Note): void {
+    clearTimeout(n.timer);
+    n.timer = window.setTimeout(() => (n.big ? this.shrink(n) : this.fadeNote(n)), n.big ? bigMs(n.text) : SMALL_MS);
+  }
+
+  private shrink(n: Note): void {
+    this.setBig(n, false);
+    n.must = false;
+    this.startClock(n);
+  }
+
+  private fadeNote(n: Note): void {
+    n.el.classList.add('out');
+    n.timer = window.setTimeout(() => this.dropNote(n), 400);
+  }
+
+  private dropNote(n: Note): void {
+    clearTimeout(n.timer);
+    n.el.remove();
+    this.notes = this.notes.filter((x) => x !== n);
   }
 
   log(text: string, color: number): void {
@@ -584,7 +706,7 @@ export class Hud {
     if (!c) {
       this.tutEl.hidden = true;
       this.tutKey = '';
-      this.toasts.style.top = this.toasts.style.left = this.toasts.style.width = '';
+      this.toasts.style.top = '';
       this.panel.style.maxHeight = '';
       return;
     }
@@ -650,8 +772,8 @@ export class Hud {
   }
 
   /**
-   * Keep the card under the top bar (which can wrap) and the toasts under the card,
-   * and keep the selection panel off the card so the instructions always show.
+   * Keep the card under the top bar (which can wrap), the messages out from behind it,
+   * and the selection panel off the card so the instructions always show.
    * A panel down the left side pushes the card right; a panel across the bottom
    * (upright phones) gets shorter instead.
    */
@@ -681,9 +803,11 @@ export class Hud {
         if (p.top - root.top < below) this.panel.style.maxHeight = `${Math.max(120, p.bottom - root.top - below)}px`;
       }
     }
-    this.toasts.style.top = `${top + card.offsetHeight + 6}px`;
-    this.toasts.style.left = card.style.left;
-    this.toasts.style.width = card.style.width;
+    // The messages only move down if the card reaches their corner.
+    const c = card.getBoundingClientRect();
+    const feed = this.toasts.getBoundingClientRect();
+    const reaches = c.left < feed.right + 8 && c.right + 8 > feed.left;
+    this.toasts.style.top = reaches ? `${top + card.offsetHeight + 6}px` : '';
   }
 
   tutorialDone(d: TutDone): void {
@@ -756,6 +880,12 @@ export class Hud {
     const sy = c.height / w.h;
     g.fillStyle = '#cdeaa8';
     g.fillRect(0, 0, c.width, c.height);
+    for (const o of w.obstacles) {
+      g.fillStyle = o.kind === 'pond' ? '#7ccaf0' : o.kind === 'trees' ? '#5bb05a' : '#bdb6ae';
+      g.beginPath();
+      g.ellipse(o.x * sx, o.y * sy, o.r * sx, o.r * sy, 0, 0, Math.PI * 2);
+      g.fill();
+    }
     for (const b of w.buildings) {
       g.fillStyle = hex(w.factions[b.faction].color) + '33';
       g.beginPath();
@@ -774,8 +904,8 @@ export class Hud {
   showEnd(w: World): void {
     if (this.endShown || !w.outcome) return;
     this.endShown = true;
-    const win = w.outcome.winner === PLAYER;
-    const st = w.factions[PLAYER].stats;
+    const win = w.outcome.winner === this.me;
+    const st = w.factions[this.me].stats;
     const mins = Math.floor(w.time / 60);
     const secs = Math.floor(w.time % 60).toString().padStart(2, '0');
     this.endEl.hidden = false;
@@ -786,7 +916,7 @@ export class Hud {
     <div class="card">
       <div class="big">${win ? '🎉' : '🥲'}</div>
       <h2>${win ? 'Your blobs united the world!' : 'Another team took over'}</h2>
-      <p>${esc(w.outcome.reason)}</p>
+      <p>${esc(win && w.outcome.share !== undefined ? `Your blobs lead ${w.outcome.share}% of the world!` : w.outcome.reason)}</p>
       <div class="grid">
         <span>💗 Befriended</span><b>${st.converted}</b>
         <span>🐣 Born</span><b>${st.births}</b>
@@ -853,6 +983,7 @@ function orderText(w: World, b: Blob): string {
       return 'walking';
     default:
       if (b.area) return 'befriending the crowd';
+      if (b.job === 'student') return w.factions[b.faction].counts.school ? 'studying 🎒' : 'needs a school';
       if (b.job === 'teacher') return 'looking for students';
       if (b.job === 'recruiter') return 'looking for strangers';
       return b.faction === NEUTRAL ? 'wandering' : 'chilling';

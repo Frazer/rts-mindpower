@@ -1,12 +1,15 @@
 import '@fontsource-variable/fredoka/wght.css';
 import './style.css';
 import { sound } from './audio';
-import { Game } from './game';
+import { Game, type OnlineOptions } from './game';
 import { MODES, type ModeId } from './modes';
 import { platform } from './platform';
 import { completed, markCompleted, resetProgress } from './progress';
 import { findLevel, levelsFor } from './tutorials';
 import { DEFAULT_RIVALS, MAX_RIVALS, clampRivals, teamDefs } from './sim/world';
+import { isMapId, isMapSize, type MapId, type MapSize } from './sim/maps';
+import { mapPicker } from './ui/mapPicker';
+import { Online, onlineAvailable } from './online';
 
 const host = document.getElementById('game')!;
 const hudRoot = document.getElementById('hud')!;
@@ -51,6 +54,28 @@ function setRivals(n: number): void {
 }
 
 const hex = (c: number): string => `#${c.toString(16).padStart(6, '0')}`;
+
+// Which map a normal game uses. ?map=lakes&size=large override it for this visit.
+const MAP_KEY = 'mindblobs.map.v1';
+let mapPick: { map: MapId; size: MapSize } | null = null;
+function getMap(): { map: MapId; size: MapSize } {
+  if (mapPick) return mapPick;
+  let saved: { map?: unknown; size?: unknown } = {};
+  try {
+    saved = JSON.parse(platform.storage.getItem(MAP_KEY) ?? '{}') as typeof saved;
+  } catch {
+    // Junk saved: use the defaults.
+  }
+  const q = new URLSearchParams(location.search);
+  const map = q.get('map') ?? saved.map;
+  const size = q.get('size') ?? saved.size;
+  mapPick = { map: isMapId(map) ? map : 'meadow', size: isMapSize(size) ? size : 'medium' };
+  return mapPick;
+}
+function setMap(change: Partial<{ map: MapId; size: MapSize }>): void {
+  mapPick = { ...getMap(), ...change };
+  platform.storage.setItem(MAP_KEY, JSON.stringify(mapPick));
+}
 
 function rivalsPicker(): string {
   const n = getRivals();
@@ -113,6 +138,8 @@ function showMenu(): void {
         }
       </div>
       ${rivalsPicker()}
+      ${mapPicker(getMap().map, getMap().size)}
+      ${onlineAvailable() ? '<button class="online-btn" data-online>🌐 Play online with friends</button>' : ''}
       <div class="learn ${pro ? '' : 'single'}">
         ${pro ? learnButton('casual', 'Casual tutorials') + learnButton('pro', 'Pro tutorials') : learnButton('casual', 'Tutorials')}
       </div>
@@ -130,6 +157,19 @@ function showMenu(): void {
   );
   menu.querySelectorAll<HTMLButtonElement>('[data-tuts]').forEach((b) =>
     b.addEventListener('click', () => showTutorials(b.dataset.tuts as ModeId)),
+  );
+  menu.querySelector('[data-online]')?.addEventListener('click', () => online.open());
+  menu.querySelectorAll<HTMLButtonElement>('[data-map]').forEach((b) =>
+    b.addEventListener('click', () => {
+      setMap({ map: b.dataset.map as MapId });
+      showMenu();
+    }),
+  );
+  menu.querySelectorAll<HTMLButtonElement>('[data-size]').forEach((b) =>
+    b.addEventListener('click', () => {
+      setMap({ size: b.dataset.size as MapSize });
+      showMenu();
+    }),
   );
   menu.querySelectorAll<HTMLButtonElement>('[data-rivals]').forEach((b) =>
     b.addEventListener('click', () => {
@@ -228,9 +268,39 @@ async function launch(id: ModeId, levelId?: string): Promise<void> {
       },
     },
     seed,
-    level ? undefined : getRivals(),
+    level ? {} : { rivals: getRivals(), map: getMap().map, mapSize: getMap().size },
   );
   if (import.meta.env.DEV) (window as unknown as { __game: Game }).__game = game;
+}
+
+// ─── online ───
+
+const online = new Online({
+  menu,
+  back: showMenu,
+  play: launchOnline,
+  stop: () => {
+    game?.destroy();
+    game = null;
+  },
+});
+
+async function launchOnline(o: OnlineOptions): Promise<Game> {
+  game?.destroy();
+  game = null;
+  menu.hidden = true;
+  const g = await Game.start(
+    MODES[o.setup.mode],
+    host,
+    hudRoot,
+    { onMenu: () => online.menuTap(), onRestart: () => online.rematch() },
+    undefined,
+    {},
+    o,
+  );
+  game = g;
+  if (import.meta.env.DEV) (window as unknown as { __game: Game }).__game = g;
+  return g;
 }
 
 // ─── sound and page behaviour ───
@@ -264,7 +334,9 @@ async function boot(): Promise<void> {
   // ?mode=casual|pro skips the menu; add &tut=<level id> to jump into a tutorial.
   const params = new URLSearchParams(location.search);
   const param = params.get('mode');
-  if (param === 'casual' || param === 'pro') await start(param, params.get('tut') ?? undefined);
+  const room = params.get('room')?.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
+  if (room && onlineAvailable()) online.open(room);
+  else if (param === 'casual' || param === 'pro') await start(param, params.get('tut') ?? undefined);
   else showMenu();
 }
 

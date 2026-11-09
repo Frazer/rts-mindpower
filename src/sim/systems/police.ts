@@ -74,7 +74,7 @@ function recruit(w: World, dt: number): void {
     f.policeTimer -= dt;
     if (f.policeTimer > 0) continue;
     f.policeTimer = 1.5;
-    const desired = (f.counts.hall > 0 ? 1 : 0) + 2 * f.counts.police + (f.tech >= 5 ? 1 : 0);
+    const desired = (f.counts.hall > 0 ? 1 : 0) + 2 * f.levels.police + (f.tech >= 5 ? 1 : 0);
     if (f.police >= desired || f.gold < POLICE_RECRUIT_COST || f.pop < 4) continue;
 
     let best: Blob | null = null;

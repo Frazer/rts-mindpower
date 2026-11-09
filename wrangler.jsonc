@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mind-blobs-relay",
+  "main": "server/worker.ts",
+  "compatibility_date": "2026-11-01",
+  "send_metrics": false,
+  "durable_objects": {
+    "bindings": [{ "name": "RELAY", "class_name": "RelayObject" }]
+  },
+  // SQLite-backed: the only kind Cloudflare's free plan allows. The relay doesn't store anything in it.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RelayObject"] }]
+}

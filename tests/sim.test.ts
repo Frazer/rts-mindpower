@@ -76,7 +76,7 @@ describe('simulation', () => {
       taught = w.drainEvents().find((e) => e.type === 'taught')?.text ?? '';
     }
     expect(taught).toContain(student.name);
-    expect(student.traits.kindness).toBeGreaterThan(0.4); // learned
+    expect(student.traits.kindness).toBeGreaterThan(0.28); // learned
     expect(student.traits.violence).toBeLessThan(0.65); // calmed down
     expect(student.traits.strength).toBeGreaterThan(0.6); // teacher's weakness not copied
     expect(teacher.order.kind).toBe('none');

@@ -1,6 +1,6 @@
 import { ADULT_AGE, ATTACK_RANGE, NEUTRAL } from '../config';
 import type { Blob } from '../types';
-import { clamp01, dist2 } from '../util';
+import { clamp, clamp01, dist2 } from '../util';
 import type { World } from '../world';
 
 const near: Blob[] = [];
@@ -58,7 +58,7 @@ export function nearestVictim(w: World, b: Blob, r: number): Blob | null {
 
 export function hit(w: World, a: Blob, t: Blob): void {
   a.attackCd = 0.9;
-  const dmg = Math.max(0.05, 0.18 + 0.3 * a.traits.strength - 0.12 * t.traits.fitness - 0.08 * t.traits.strength);
+  const dmg = clamp(0.18 + 0.3 * a.traits.strength - 0.12 * t.traits.fitness - 0.08 * t.traits.strength, 0.05, 0.6);
   t.health -= dmg;
   a.heat = t.role === 'police' ? 80 : 60;
   a.mood = 'angry';
@@ -97,7 +97,7 @@ export function hit(w: World, a: Blob, t: Blob): void {
     t.faction !== a.faction &&
     t.role === 'citizen' &&
     t.loyalty < 0.35 &&
-    w.rng.chance((1 - t.traits.allegiance) * 0.25 * (1 - t.traits.strength))
+    w.rng.chance(Math.max(0, 1 - t.traits.allegiance) * 0.25 * Math.max(0, 1 - t.traits.strength))
   ) {
     w.convert(t, a.faction, 'fear');
   }

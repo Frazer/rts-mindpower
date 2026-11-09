@@ -1,5 +1,5 @@
 import { ADULT_AGE, NEUTRAL, TALK_RANGE } from '../config';
-import { NEGATIVE_TRAITS, TRAIT_INFO, TRAIT_KEYS, driftTraits, talkScore, type TraitKey } from '../traits';
+import { NATURAL_MAX, NEGATIVE_TRAITS, TRAIT_INFO, TRAIT_KEYS, driftTraits, payoff, skillShare, talkScore, train, type TraitKey } from '../traits';
 import type { Blob } from '../types';
 import { clamp01, dist2 } from '../util';
 import type { World } from '../world';
@@ -8,6 +8,8 @@ const near: Blob[] = [];
 
 /** Lessons per Teach order (one every ~1–1.5 s). */
 export const TEACH_SESSIONS = 8;
+/** However far ahead a teacher is, a student only takes in this much at once. */
+const LESSON_GAP = 0.15;
 type Gains = Partial<Record<TraitKey, number>>;
 
 /**
@@ -23,7 +25,7 @@ export function social(w: World, _dt: number): void {
       const t = w.byId.get(o.target);
       if (!t || !t.alive) continue;
       if (dist2(b.x, b.y, t.x, t.y) > TALK_RANGE * TALK_RANGE) continue;
-      b.talkCd = 1.0 + (1 - b.traits.patience) * 0.5;
+      b.talkCd = chatPause(b);
       t.talkCd = Math.max(t.talkCd, 1.0);
       talk(w, b, t, true);
       o.tries++;
@@ -34,7 +36,7 @@ export function social(w: World, _dt: number): void {
       const t = w.byId.get(o.target);
       if (!t || !t.alive) continue;
       if (dist2(b.x, b.y, t.x, t.y) > TALK_RANGE * TALK_RANGE) continue;
-      b.talkCd = 1.0 + (1 - b.traits.patience) * 0.5;
+      b.talkCd = chatPause(b);
       t.talkCd = Math.max(t.talkCd, 1.0);
       mentor(w, b, t, o.gain);
       if (++o.tries >= TEACH_SESSIONS) {
@@ -62,14 +64,21 @@ export function social(w: World, _dt: number): void {
   }
 }
 
+const chatPause = (b: Blob): number => 1.0 + Math.max(0, 1 - b.traits.patience) * 0.5;
+
+/** How much of what a speaker knows rubs off on a listener in a chat. */
+function chatRate(speaker: Blob, listener: Blob): number {
+  return 0.012 * Math.min(NATURAL_MAX, speaker.traits.teaching) * (0.3 + 0.7 * Math.min(NATURAL_MAX, listener.traits.openness));
+}
+
 export function talk(w: World, a: Blob, b: Blob, focused: boolean): void {
   influence(w, a, b, focused);
   influence(w, b, a, false);
   const same = a.faction === b.faction;
   const cross = same ? 1 : 0.5;
   const schoolA = w.hasSchoolNear(a.faction, a.x, a.y) ? 1.5 : 1;
-  driftTraits(b.traits, a.traits, 0.012 * a.traits.teaching * (0.3 + 0.7 * b.traits.openness) * cross * schoolA);
-  driftTraits(a.traits, b.traits, 0.012 * b.traits.teaching * (0.3 + 0.7 * a.traits.openness) * cross);
+  driftTraits(b.traits, a.traits, chatRate(a, b) * cross * schoolA);
+  driftTraits(a.traits, b.traits, chatRate(b, a) * cross);
   a.lookAt = b.id;
   b.lookAt = a.id;
   if (same) {
@@ -88,7 +97,7 @@ function influence(w: World, s: Blob, r: Blob, focused: boolean): void {
     r.loyalty = Math.min(w.loyaltyCap(r), r.loyalty + 0.012 + 0.02 * s.traits.kindness);
     return;
   }
-  let pull = talkScore(s.traits);
+  let pull = payoff(talkScore(s.traits));
   if (s.faction === NEUTRAL) {
     pull *= 0.35;
   } else {
@@ -101,7 +110,7 @@ function influence(w: World, s: Blob, r: Blob, focused: boolean): void {
   if (focused || s.role === 'ambassador') pull *= 1.35;
   if (r.role === 'police') pull *= 0.4;
   else if (r.role === 'ambassador') pull *= 0.5;
-  const receptivity = 0.35 + 0.65 * r.traits.openness;
+  const receptivity = 0.35 + 0.65 * Math.min(NATURAL_MAX, r.traits.openness);
   r.loyalty -= pull * receptivity * 0.13;
   if (r.loyalty <= 0) w.convert(r, s.faction, 'talk');
 }
@@ -109,18 +118,25 @@ function influence(w: World, s: Blob, r: Blob, focused: boolean): void {
 /**
  * One lesson: the student's traits move toward the teacher's, but only where the
  * teacher is better (higher, or calmer for violence). Good teachers, patient
- * students, kids, schools and tech all speed it up.
+ * students, kids, schools and tech all speed it up, and it gets harder the better
+ * the student already is. Nobody learns more than their teacher knows.
  */
 export function mentor(w: World, teacher: Blob, student: Blob, gain: Gains): void {
   const kid = student.age < ADULT_AGE ? 2 : 1;
   const school = w.hasSchoolNear(teacher.faction, teacher.x, teacher.y) ? 1.5 : 1;
   const tech = 1 + 0.05 * w.factions[teacher.faction].tech;
-  const rate = Math.min(0.5, 0.08 * (0.5 + teacher.traits.teaching) * (0.6 + 0.4 * student.traits.patience) * kid * school * tech);
+  // A master teacher is better than a good one, but not three times better.
+  const skill = 0.5 + Math.min(1, teacher.traits.teaching) + 0.25 * Math.max(0, teacher.traits.teaching - 1);
+  const rate = Math.min(0.5, 0.08 * skill * (0.6 + 0.4 * student.traits.patience) * kid * school * tech);
   for (const k of TRAIT_KEYS) {
     const gap = teacher.traits[k] - student.traits[k];
     if (NEGATIVE_TRAITS.has(k) ? gap >= 0 : gap <= 0) continue;
-    student.traits[k] = clamp01(student.traits[k] + gap * rate);
-    gain[k] = (gain[k] ?? 0) + Math.abs(gap * rate);
+    const before = student.traits[k];
+    if (NEGATIVE_TRAITS.has(k)) student.traits[k] = clamp01(before + gap * rate);
+    else train(student.traits, k, Math.min(gap, LESSON_GAP) * rate);
+    // Never past the teacher.
+    if (!NEGATIVE_TRAITS.has(k)) student.traits[k] = Math.min(student.traits[k], teacher.traits[k]);
+    gain[k] = (gain[k] ?? 0) + Math.abs(student.traits[k] - before);
   }
   student.loyalty = Math.min(w.loyaltyCap(student), student.loyalty + 0.02 + 0.02 * teacher.traits.kindness);
   teacher.lookAt = student.id;
@@ -139,7 +155,7 @@ function taughtText(w: World, teacher: Blob, student: Blob, gain: Gains): string
   const parts = top.map(([k, v]) => {
     const t = TRAIT_INFO[k];
     const neg = NEGATIVE_TRAITS.has(k);
-    if (w.mode.showNumbers) return `${t.icon} ${t.label} ${neg ? '−' : '+'}${Math.max(1, Math.round(v * 100))}`;
+    if (w.mode.showNumbers) return `${t.icon} ${t.label} ${neg ? '−' : '+'}${Math.max(1, Math.round(skillShare(k, v) * 100))}`;
     return neg ? '😌 Calmness' : `${t.icon} ${t.label}`;
   });
   if (w.mode.showNumbers) return `${teacher.name} taught ${student.name}: ${parts.join(', ')}`;

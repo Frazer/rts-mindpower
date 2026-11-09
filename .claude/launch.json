@@ -4,8 +4,52 @@
     {
       "name": "mind-blobs",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--", "--port", "5173", "--strictPort"],
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "5173",
+        "--strictPort"
+      ],
       "port": 5173
+    },
+    {
+      "name": "relay-cloudflare",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "wrangler",
+        "dev",
+        "--port",
+        "8787"
+      ],
+      "port": 8787
+    },
+    {
+      "name": "mind-blobs-on-cloudflare-relay",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "VITE_RELAY_URL=ws://127.0.0.1:8787/relay",
+        "npx",
+        "vite",
+        "--port",
+        "5174",
+        "--strictPort"
+      ],
+      "port": 5174
+    },
+    {
+      "name": "mind-blobs-on-live-relay",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "VITE_RELAY_URL=wss://mind-blobs-relay.frazerkirkman.workers.dev/relay",
+        "npx",
+        "vite",
+        "--port",
+        "5175",
+        "--strictPort"
+      ],
+      "port": 5175
     }
   ]
 }

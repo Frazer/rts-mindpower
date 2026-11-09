@@ -1,6 +1,7 @@
 import { Application, Container, Graphics, Sprite } from 'pixi.js';
-import { BUILDINGS, FOUNTAIN_RADIUS, SCHOOL_RADIUS, USURP_RADIUS, policeDetectRadius } from '../sim/config';
+import { BUILDINGS, USURP_RADIUS, fountainRadius, policeDetectRadius, schoolRadius } from '../sim/config';
 import type { Building, BuildingKind, SimEvent } from '../sim/types';
+import type { Obstacle } from '../sim/maps';
 import type { World } from '../sim/world';
 import { BlobView } from './blobView';
 import { Camera } from './camera';
@@ -19,6 +20,8 @@ interface BuildingView {
   root: Container;
   light?: Graphics;
   faction: number;
+  level: number;
+  stars: Container;
 }
 
 interface Pulse {
@@ -30,6 +33,9 @@ interface Pulse {
 }
 
 const OUTLINE = 0x6b4f5a;
+
+/** How visible blobs (and their hearts and speech) stay while the player is looking at buildings. */
+const FADED_BLOBS = 0.08;
 
 /** Draws the world: ground, territory, buildings, blobs, effects. Reads sim state, never writes it. */
 export class GameRenderer {
@@ -93,6 +99,53 @@ export class GameRenderer {
       else if (r < 0.85) g.circle(x, y, 2.2).fill([0xffffff, 0xffe27a, 0xffb3d1, 0xc8b6ff][i % 4]);
       else g.ellipse(x, y, 4.5, 2.8).fill(0xe0ebcb);
     }
+    for (const o of this.world.obstacles) this.drawObstacle(o);
+  }
+
+  /** Ponds, tree clumps and boulders (the sim treats each as a circle). */
+  private drawObstacle(o: Obstacle): void {
+    const g = this.ground;
+    const rnd = (a: number, b: number): number => a + Math.random() * (b - a);
+    if (o.kind === 'pond') {
+      g.circle(o.x, o.y + 4, o.r + 8).fill(0xb3d98f);
+      g.circle(o.x, o.y, o.r).fill(0x7ccaf0).stroke({ width: 6, color: 0x5cb4e2 });
+      g.circle(o.x, o.y + o.r * 0.12, o.r * 0.82).fill({ color: 0x67bde9, alpha: 0.6 });
+      g.ellipse(o.x - o.r * 0.32, o.y - o.r * 0.42, o.r * 0.3, o.r * 0.08).fill({ color: 0xffffff, alpha: 0.45 });
+      for (let i = 0; i < 3; i++) {
+        const a = rnd(0, Math.PI * 2);
+        const d = rnd(0.35, 0.7) * o.r;
+        const x = o.x + Math.cos(a) * d;
+        const y = o.y + Math.sin(a) * d;
+        g.circle(x, y, 9).fill(0x6fbf63).stroke({ width: 1.5, color: 0x4e9d4c });
+        g.moveTo(x, y).lineTo(x + 9, y - 3).stroke({ width: 2, color: 0x67bde9 });
+      }
+    } else if (o.kind === 'trees') {
+      g.ellipse(o.x, o.y + o.r * 0.55, o.r * 1.05, o.r * 0.45).fill({ color: 0x000000, alpha: 0.12 });
+      const n = Math.max(4, Math.round(o.r / 11));
+      const crowns: [number, number, number][] = [];
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + rnd(-0.3, 0.3);
+        const d = o.r * rnd(0.3, 0.55);
+        crowns.push([o.x + Math.cos(a) * d, o.y + Math.sin(a) * d * 0.85, o.r * rnd(0.4, 0.55)]);
+      }
+      crowns.push([o.x, o.y - o.r * 0.1, o.r * 0.55]);
+      crowns.sort((a, b) => a[1] - b[1]);
+      for (const [x, y, r] of crowns) {
+        g.circle(x, y, r).fill(0x5bb05a).stroke({ width: 3, color: 0x3d8a44 });
+        g.circle(x - r * 0.3, y - r * 0.3, r * 0.35).fill({ color: 0x86cf77, alpha: 0.8 });
+      }
+    } else {
+      g.ellipse(o.x, o.y + o.r * 0.5, o.r, o.r * 0.4).fill({ color: 0x000000, alpha: 0.12 });
+      const stones: [number, number, number][] = [
+        [o.x - o.r * 0.35, o.y + o.r * 0.1, o.r * 0.6],
+        [o.x + o.r * 0.3, o.y + o.r * 0.2, o.r * 0.5],
+        [o.x, o.y - o.r * 0.25, o.r * 0.65],
+      ];
+      for (const [x, y, r] of stones) {
+        g.circle(x, y, r).fill(0xbdb6ae).stroke({ width: 3, color: 0x8d857d });
+        g.ellipse(x - r * 0.25, y - r * 0.35, r * 0.4, r * 0.18).fill({ color: 0xffffff, alpha: 0.4 });
+      }
+    }
   }
 
   // ───────────────────────────── per frame ─────────────────────────────
@@ -104,10 +157,15 @@ export class GameRenderer {
     selected: ReadonlySet<number>,
     selectedBuilding: number | null,
     highlightTerritoryOf: number,
+    fadeBlobs: boolean,
   ): void {
     const w = this.world;
     this.camera.resize(this.app.screen.width, this.app.screen.height);
     this.camera.apply(this.worldLayer);
+
+    const fade = fadeBlobs ? FADED_BLOBS : 1;
+    this.blobLayer.alpha += (fade - this.blobLayer.alpha) * Math.min(1, dt * 14);
+    this.fxLayer.alpha = this.blobLayer.alpha;
 
     this.drawTerritory(highlightTerritoryOf);
     this.syncBuildings(now, selectedBuilding);
@@ -191,8 +249,8 @@ export class GameRenderer {
     const b = this.world.buildings.find((x) => x.id === selectedBuilding);
     if (!b) return;
     const color = this.world.factions[b.faction].color;
-    if (b.kind === 'school') g.circle(b.x, b.y, SCHOOL_RADIUS).stroke({ width: 3, color, alpha: 0.8 });
-    if (b.kind === 'fountain') g.circle(b.x, b.y, FOUNTAIN_RADIUS).fill({ color: 0xff8fc4, alpha: 0.08 }).stroke({ width: 3, color: 0xff8fc4, alpha: 0.8 });
+    if (b.kind === 'school') g.circle(b.x, b.y, schoolRadius(b)).stroke({ width: 3, color, alpha: 0.8 });
+    if (b.kind === 'fountain') g.circle(b.x, b.y, fountainRadius(b)).fill({ color: 0xff8fc4, alpha: 0.08 }).stroke({ width: 3, color: 0xff8fc4, alpha: 0.8 });
     if (b.kind === 'police') {
       g.circle(b.x, b.y, policeDetectRadius(this.world.factions[b.faction].tech)).stroke({ width: 3, color: 0x3b6cff, alpha: 0.7 });
     }
@@ -215,7 +273,8 @@ export class GameRenderer {
         this.buildingLayer.addChild(v.root);
         this.bviews.set(b.id, v);
       }
-      v.root.scale.set(selected === b.id ? 1.08 : 1);
+      if (v.level !== b.level) this.drawLevel(v, b);
+      v.root.scale.set((selected === b.id ? 1.08 : 1) * (1 + 0.05 * (b.level - 1)));
       if (v.light) v.light.tint = Math.floor(now / 400) % 2 === 0 ? 0xff4d4d : 0x4d7bff;
     }
   }
@@ -244,7 +303,23 @@ export class GameRenderer {
       light.position.set(0, -r * 1.32);
       root.addChild(light);
     }
-    return { root, light, faction: -1 };
+    const stars = new Container();
+    root.addChild(stars);
+    return { root, light, faction: -1, level: 1, stars };
+  }
+
+  /** A row of stars along the front of a building that has been levelled up. */
+  private drawLevel(v: BuildingView, b: Building): void {
+    v.level = b.level;
+    for (const s of v.stars.removeChildren()) s.destroy();
+    const y = BUILDINGS[b.kind].radius * 0.72;
+    for (let i = 0; i < b.level && b.level > 1; i++) {
+      const star = new Sprite(this.tx.emoji('⭐'));
+      star.anchor.set(0.5);
+      star.scale.set(0.24);
+      star.position.set((i - (b.level - 1) / 2) * 11, y);
+      v.stars.addChild(star);
+    }
   }
 
   // ───────────────────────────── build ghost & selection box ─────────────────────────────
@@ -319,6 +394,9 @@ export class GameRenderer {
         case 'build':
           for (let i = 0; i < 4; i++) this.spawn('✨', e.x + (Math.random() - 0.5) * 50, e.y - Math.random() * 30, 0.4, 1);
           break;
+        case 'upgrade':
+          for (let i = 0; i < 6; i++) this.spawn('⭐', e.x + (Math.random() - 0.5) * 60, e.y - Math.random() * 40, 0.4, 1.1);
+          break;
         case 'tech':
           this.spawn('💡', e.x, e.y - 60, 0.9, 2.2);
           break;
@@ -374,11 +452,12 @@ export class GameRenderer {
   }
 
   /** Building nearest a world point within its radius. */
-  buildingAt(x: number, y: number): Building | undefined {
+  /** The building at a point, if any. `slack` is how far outside its edge still counts. */
+  buildingAt(x: number, y: number, slack = 6): Building | undefined {
     let best: Building | undefined;
     let bd = Infinity;
     for (const b of this.world.buildings) {
-      const r = BUILDINGS[b.kind].radius + 6;
+      const r = BUILDINGS[b.kind].radius + slack;
       const d = (b.x - x) ** 2 + (b.y - y) ** 2;
       if (d < r * r && d < bd) {
         bd = d;

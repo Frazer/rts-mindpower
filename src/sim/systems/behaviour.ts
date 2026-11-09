@@ -1,6 +1,8 @@
-import { ADULT_AGE, ATTACK_RANGE, BUILDINGS, FOUNTAIN_RADIUS, NEUTRAL, TALK_RANGE } from '../config';
+import { ADULT_AGE, ATTACK_RANGE, BUILDINGS, FOUNTAIN_RADIUS, NEUTRAL, TALK_RANGE, lifeLength } from '../config';
+import type { Obstacle } from '../maps';
+import { train } from '../traits';
 import type { Blob } from '../types';
-import { clamp, clamp01, dist2 } from '../util';
+import { clamp, clamp01, cos, dist2, sin } from '../util';
 import type { World } from '../world';
 
 interface Goal {
@@ -23,9 +25,10 @@ function setGoal(x: number, y: number, speed: number, stop: number): Goal {
 }
 
 export function baseSpeed(b: Blob): number {
-  let s = 26 + 34 * b.traits.fitness;
+  // Past natural ability, more fitness still helps, but nobody turns into a rocket.
+  let s = 26 + 34 * Math.min(1, b.traits.fitness) + 12 * Math.max(0, b.traits.fitness - 1);
   if (b.age < ADULT_AGE) s *= 0.8;
-  if (b.age > b.lifespan * 0.85) s *= 0.7;
+  if (b.age > lifeLength(b) * 0.85) s *= 0.7;
   return s;
 }
 
@@ -44,9 +47,10 @@ export function behaviour(w: World, dt: number): void {
       b.vy *= 0.8;
       b.x = clamp(b.x + b.vx * dt, 20, w.w - 20);
       b.y = clamp(b.y + b.vy * dt, 20, w.h - 20);
+      if (w.obstacles.length) ({ x: b.x, y: b.y } = w.free(b.x, b.y));
       continue;
     }
-    steer(w, b, resolveGoal(w, b, dt), dt);
+    steer(w, b, around(w, b, resolveGoal(w, b, dt)), dt);
   }
 }
 
@@ -78,8 +82,8 @@ function jailTick(w: World, b: Blob, dt: number): void {
   const tech = b.jailedBy >= 0 ? w.factions[b.jailedBy].tech : 0;
   const rate = dt * 0.004 * (1 + 0.15 * tech);
   b.traits.violence = clamp01(b.traits.violence - rate);
-  b.traits.kindness = clamp01(b.traits.kindness + rate * 0.5);
-  b.traits.honesty = clamp01(b.traits.honesty + rate * 0.3);
+  train(b.traits, 'kindness', rate * 0.5);
+  train(b.traits, 'honesty', rate * 0.3);
   if (b.jail <= 0) {
     b.jail = 0;
     b.mood = 'calm';
@@ -131,7 +135,7 @@ function resolveGoal(w: World, b: Blob, dt: number): Goal {
       // Stand in a ring around the building.
       const a = (b.id * 2.39996) % (Math.PI * 2);
       const r = BUILDINGS[bld.kind].radius + 22 + (b.id % 3) * 12;
-      return setGoal(bld.x + Math.cos(a) * r, bld.y + 10 + Math.sin(a) * r * 0.7, base, 5);
+      return setGoal(bld.x + cos(a) * r, bld.y + 10 + sin(a) * r * 0.7, base, 5);
     }
     case 'chase': {
       const t = w.byId.get(o.target);
@@ -150,7 +154,7 @@ function resolveGoal(w: World, b: Blob, dt: number): Goal {
       }
       const dx = b.x - o.fromX;
       const dy = b.y - o.fromY;
-      const d = Math.hypot(dx, dy) || 1;
+      const d = Math.sqrt(dx * dx + dy * dy) || 1;
       return setGoal(b.x + (dx / d) * 80, b.y + (dy / d) * 80, base * 1.15, 0);
     }
     case 'none':
@@ -184,8 +188,8 @@ function resolveGoal(w: World, b: Blob, dt: number): Goal {
         b.faction === NEUTRAL ? 170 : b.role === 'police' ? w.territoryRadius(b.faction) * 0.9 : b.age < ADULT_AGE ? 60 : 90;
       const a = w.rng.range(0, Math.PI * 2);
       const rr = Math.sqrt(w.rng.next()) * r;
-      b.tx = clamp(b.homeX + Math.cos(a) * rr, 30, w.w - 30);
-      b.ty = clamp(b.homeY + Math.sin(a) * rr, 30, w.h - 30);
+      b.tx = clamp(b.homeX + cos(a) * rr, 30, w.w - 30);
+      b.ty = clamp(b.homeY + sin(a) * rr, 30, w.h - 30);
     }
   }
   return setGoal(b.tx, b.ty, base * (b.role === 'police' ? 0.7 : 0.5), 3);
@@ -221,10 +225,54 @@ function nearestPolice(w: World, b: Blob, r: number): Blob | null {
   return best;
 }
 
+/**
+ * Ponds, rocks and trees: a goal inside one moves to its near edge, and a blob whose
+ * straight path is blocked heads for a point just past the obstacle's side first.
+ */
+function around(w: World, b: Blob, g: Goal): Goal {
+  if (w.obstacles.length === 0) return g;
+  let gx = g.x;
+  let gy = g.y;
+  const inside = w.obstacleAt(gx, gy, 14);
+  if (inside) {
+    let dx = b.x - inside.x;
+    let dy = b.y - inside.y;
+    const d = Math.sqrt(dx * dx + dy * dy) || 1;
+    dx /= d;
+    dy /= d;
+    gx = inside.x + dx * (inside.r + 16);
+    gy = inside.y + dy * (inside.r + 16);
+  }
+  const dx = gx - b.x;
+  const dy = gy - b.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len < 1) return { ...g, x: gx, y: gy };
+  const ux = dx / len;
+  const uy = dy / len;
+  let block: Obstacle | null = null;
+  let bestT = Infinity;
+  let side = 0;
+  for (const o of w.obstacles) {
+    const ox = o.x - b.x;
+    const oy = o.y - b.y;
+    const t = ox * ux + oy * uy;
+    if (t < 0 || t > len + o.r) continue;
+    const l = ox * uy - oy * ux;
+    if (Math.abs(l) >= o.r + 16 || t >= bestT) continue;
+    bestT = t;
+    block = o;
+    // Pass on the side the path already leans to (dead ahead: split by id so it doesn't flicker).
+    side = Math.abs(l) < 4 ? (b.id & 1 ? 1 : -1) : l < 0 ? 1 : -1;
+  }
+  if (!block) return { ...g, x: gx, y: gy };
+  const off = block.r + 30;
+  return { x: block.x + side * uy * off, y: block.y - side * ux * off, speed: g.speed, stop: 0 };
+}
+
 function steer(w: World, b: Blob, g: Goal, dt: number): void {
   const dx = g.x - b.x;
   const dy = g.y - b.y;
-  const d = Math.hypot(dx, dy);
+  const d = Math.sqrt(dx * dx + dy * dy);
   let desX = 0;
   let desY = 0;
   if (d > g.stop + 1) {
@@ -253,4 +301,5 @@ function steer(w: World, b: Blob, g: Goal, dt: number): void {
   b.vy += (desY - b.vy) * k;
   b.x = clamp(b.x + b.vx * dt, 20, w.w - 20);
   b.y = clamp(b.y + b.vy * dt, 20, w.h - 20);
+  if (w.obstacles.length) ({ x: b.x, y: b.y } = w.free(b.x, b.y));
 }

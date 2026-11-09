@@ -1,4 +1,4 @@
-import { ADULT_AGE } from '../config';
+import { ADULT_AGE, CHILD_GROWTH, lifeLength } from '../config';
 import { inheritTraits } from '../traits';
 import type { Blob, Order } from '../types';
 import type { World } from '../world';
@@ -22,8 +22,8 @@ const BUSY_BREEDING = 0.3;
 export function life(w: World, dt: number): void {
   for (const b of w.blobs) {
     if (!b.alive) continue;
-    b.age += dt * w.mode.yearsPerSecond;
-    if (b.age >= b.lifespan) {
+    b.age += dt * w.mode.yearsPerSecond * (b.age < ADULT_AGE ? CHILD_GROWTH : 1);
+    if (b.age >= lifeLength(b)) {
       w.kill(b, 'old');
       continue;
     }
@@ -32,8 +32,8 @@ export function life(w: World, dt: number): void {
     const f = w.factions[b.faction];
     if (f.pop >= f.cap) continue;
     // Busy blobs (befriending, teaching, recruiting...) have far fewer babies than social ones.
-    const busy = b.order.kind !== 'none' ? BUSY_BREEDING : 1;
-    const p = Math.pow(b.traits.fertility, 1.5) * 0.07 * (f.isNeutral ? 0.6 : 1) * busy;
+    const busy = b.order.kind !== 'none' || b.job === 'student' ? BUSY_BREEDING : 1;
+    const p = b.traits.fertility * Math.sqrt(b.traits.fertility) * 0.07 * (f.isNeutral ? 0.6 : 1) * busy;
     if (!w.rng.chance(p)) continue;
 
     w.grid.query(b.x, b.y, 60, near);

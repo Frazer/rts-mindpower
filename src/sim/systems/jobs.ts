@@ -1,7 +1,7 @@
-import { ADULT_AGE, NEUTRAL } from '../config';
+import { ADULT_AGE, NEUTRAL, schoolRadius } from '../config';
 import { NEGATIVE_TRAITS, TRAIT_KEYS, type Traits } from '../traits';
-import type { Blob } from '../types';
-import { dist2 } from '../util';
+import type { Blob, Building } from '../types';
+import { clamp, cos, dist2, sin } from '../util';
 import type { World } from '../world';
 
 const near: Blob[] = [];
@@ -44,10 +44,30 @@ export function jobs(w: World, dt: number): void {
       b.jobCd = 0.3;
       continue;
     }
-    if (b.job === 'teacher') b.jobCd = findStudent(w, b) ? 0.5 : 2.5;
+    if (b.job === 'student') b.jobCd = study(w, b);
+    else if (b.job === 'teacher') b.jobCd = findStudent(w, b) ? 0.5 : 2.5;
     else if (b.job === 'recruiter') b.jobCd = findStranger(w, b) ? 0.5 : 3;
     else b.jobCd = 2;
   }
+}
+
+/** Walk to somewhere at the nearest school. Returns how long until it's worth moving again. */
+function study(w: World, b: Blob): number {
+  let school: Building | null = null;
+  let bd = Infinity;
+  for (const s of w.buildings) {
+    if (s.kind !== 'school' || s.faction !== b.faction) continue;
+    const d = dist2(b.x, b.y, s.x, s.y);
+    if (d < bd) {
+      bd = d;
+      school = s;
+    }
+  }
+  if (!school) return 3;
+  const a = w.rng.range(0, Math.PI * 2);
+  const r = w.rng.range(40, schoolRadius(school) * 0.6);
+  b.order = { kind: 'move', x: clamp(school.x + cos(a) * r, 20, w.w - 20), y: clamp(school.y + sin(a) * r, 20, w.h - 20) };
+  return w.rng.range(2, 5);
 }
 
 function findStudent(w: World, t: Blob): boolean {

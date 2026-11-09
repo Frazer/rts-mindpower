@@ -210,7 +210,7 @@ export const LEVELS: readonly Level[] = [
         point: (c) => onBlob(nearestStranger(c.w), 'Right-click'),
       },
     ],
-    outro: 'Also: Space pauses, H jumps home, Tab opens your team, + and − change speed.',
+    outro: 'Also: Space pauses, H jumps home, Tab opens your team, B shows just the buildings, + and − change speed.',
   },
 
   {
@@ -273,7 +273,7 @@ export const LEVELS: readonly Level[] = [
         progress: (c) => ({ n: me(c).stats.births, of: 3, label: 'babies' }),
       },
     ],
-    outro: 'Houses give room; Social blobs fill it. Babies grow up in under a minute.',
+    outro: 'Houses give room; Social blobs fill it. Babies grow up in under a minute. Out of space? Tap any of your buildings and level it up.',
   },
 
   {
@@ -307,11 +307,11 @@ export const LEVELS: readonly Level[] = [
       {
         text: 'Watch your blobs get kinder',
         sub: 'They learn a little every second inside the circle. Kids learn twice as fast.',
-        done: (c) => kindest(c) >= 10,
-        progress: (c) => ({ n: kindest(c), of: 10, label: 'more kindness' }),
+        done: (c) => kindest(c) >= 6,
+        progress: (c) => ({ n: kindest(c), of: 6, label: 'more kindness' }),
       },
     ],
-    outro: 'Schools are slow but steady, and make blobs cleverer too. Teachers are faster: that’s next.',
+    outro: 'Being near a school only makes blobs decent. For real experts, give a blob the 🎒 Student job. Teachers are faster: that’s next.',
   },
 
   {

@@ -92,7 +92,7 @@ export class BlobView {
 
     const grow = 0.55 + 0.45 * Math.min(1, b.age / ADULT_AGE);
     const popScale = 1 + Math.sin((this.pop / 0.6) * Math.PI) * 0.35;
-    const size = ((11 + 5 * b.traits.strength) * grow * popScale) / 32;
+    const size = ((11 + 5 * Math.min(2, b.traits.strength)) * grow * popScale) / 32;
     this.root.scale.set(size);
 
     // Hop when moving, breathe when idle.
@@ -105,7 +105,7 @@ export class BlobView {
       sy = 0.92;
       sx = 1.06;
     } else if (speed > 6) {
-      const f = 7 + 6 * b.traits.fitness;
+      const f = 7 + 6 * Math.min(1.5, b.traits.fitness);
       const s = Math.sin(t * f);
       hop = Math.abs(s) * Math.min(1, speed / 30) * 8;
       const sq = Math.cos(t * f * 2) * 0.07;

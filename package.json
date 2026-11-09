@@ -5,23 +5,31 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host",
-    "build": "tsc --noEmit && vite build",
+    "build": "npm run typecheck && vite build",
     "build:crazygames": "tsc --noEmit && vite build --mode crazygames",
     "build:poki": "tsc --noEmit && vite build --mode poki",
     "package": "bash scripts/package.sh",
     "art": "bash scripts/art.sh",
     "video": "node scripts/video.mjs",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p server && tsc --noEmit -p server/tsconfig.worker.json",
+    "test": "vitest run",
+    "relay": "node server/main.ts",
+    "relay:cf": "wrangler dev",
+    "relay:deploy": "wrangler deploy"
   },
   "dependencies": {
     "@fontsource-variable/fredoka": "^5.3.0",
     "pixi.js": "^8.22.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261108.1",
+    "@types/node": "^24.19.2",
+    "@types/ws": "^8.18.2",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.0",
+    "wrangler": "^4.158.0",
+    "ws": "^8.22.1"
   }
 }

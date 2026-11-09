@@ -29,7 +29,8 @@ let lastMode: ModeId = proOk() && !matchMedia('(pointer: coarse)').matches ? 'pr
 /** Which menu screen is up: the main one, or a mode's tutorial list. */
 let screen: 'main' | ModeId = 'main';
 const refreshMenu = (): void => {
-  if (menu.hidden) return;
+  // The online screens share this element but draw themselves; redrawing here would throw the player out of them.
+  if (menu.hidden || menu.querySelector('.online')) return;
   if (screen === 'main') showMenu();
   else showTutorials(screen);
 };

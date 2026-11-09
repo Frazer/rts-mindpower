@@ -24,6 +24,23 @@ const SEAT_KEY = 'mindblobs.seat';
 const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 const hex = (c: number): string => `#${c.toString(16).padStart(6, '0')}`;
 
+/** On itch the game runs in a frame: its address isn't the page friends should open, so we share the code instead. */
+const inFrame = window.self !== window.top;
+
+/** Must run straight from a click. Frames are refused the newer clipboard API, but this older command works in them. */
+function copyText(text: string): boolean {
+  const box = document.createElement('textarea');
+  box.value = text;
+  box.readOnly = true;
+  box.style.cssText = 'position:fixed;opacity:0;font-size:16px';
+  document.body.append(box);
+  box.select();
+  box.setSelectionRange(0, text.length);
+  const copied = document.execCommand('copy');
+  box.remove();
+  return copied;
+}
+
 /** Remembers your place in a game for this tab, so a reload puts you back in it. */
 function savedSeat(code: string): string | undefined {
   try {
@@ -330,12 +347,12 @@ export class Online {
           <span class="t"><b>${esc(d.name)}</b><span>${who}</span></span>${sit}${kind}${drop}</li>`;
       })
       .join('');
-    const link = `${location.origin}${location.pathname}?room=${l.code}`;
+    const share = inFrame ? l.code : `${location.origin}${location.pathname}?room=${l.code}`;
     const mode = (id: ModeId): string =>
       `<button data-mode="${id}" class="${l.mode === id ? 'on' : ''}" ${host ? '' : 'disabled'}>${id === 'casual' ? '📱' : '🖥️'} ${MODES[id].label}</button>`;
     m.innerHTML = `<div class="menu-card online lobby">
       <div class="tuts-h"><button data-leave title="Leave">←</button><h2>🌐 Online game</h2></div>
-      <div class="code-row"><span>Code</span><b class="code">${l.code}</b><button data-copy>📋 Copy invite link</button></div>
+      <div class="code-row"><span>Code</span><b class="code">${l.code}</b><button data-copy>📋 Copy ${inFrame ? 'code' : 'invite link'}</button></div>
       <div class="seg mode-seg">${mode('casual')}${mode('pro')}</div>
       ${l.mode === 'pro' ? '<p class="note">Pro needs a keyboard and mouse. Pick Casual if anyone is on a phone.</p>' : ''}
       ${mapPicker(l.map ?? 'meadow', l.size ?? 'medium', host)}
@@ -352,10 +369,9 @@ export class Online {
     m.querySelector('[data-leave]')!.addEventListener('click', () => this.leave());
     m.querySelector('[data-copy]')!.addEventListener('click', (e) => {
       const btn = e.currentTarget as HTMLButtonElement;
-      void navigator.clipboard?.writeText(link).then(
-        () => (btn.textContent = '✅ Copied'),
-        () => window.prompt('Send this link to your friends:', link),
-      );
+      if (copyText(share)) btn.textContent = '✅ Copied';
+      else if (inFrame) btn.textContent = 'Tell friends the code';
+      else window.prompt('Send this link to your friends:', share);
     });
     m.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
       b.addEventListener('click', () => this.settings({ mode: b.dataset.mode as ModeId })),

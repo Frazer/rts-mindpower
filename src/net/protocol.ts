@@ -36,6 +36,23 @@ export interface Lobby {
   slots: Slot[];
   players: LobbyPlayer[];
   playing: boolean;
+  /** Shown in everyone's list of open games, not just reachable by its code. */
+  listed: boolean;
+}
+
+/** A public game waiting for players, as the list of open games shows it. */
+export interface GameInfo {
+  code: string;
+  /** Host's name. */
+  host: string;
+  mode: ModeId;
+  map: MapId;
+  size: MapSize;
+  /** People in it now. */
+  players: number;
+  /** Teams still open for a person. */
+  free: number;
+  teams: number;
 }
 
 /** What every player needs to build the same world. */
@@ -60,7 +77,9 @@ export interface Turn {
 export type ClientMsg =
   | { t: 'create'; name: string }
   | { t: 'join'; code: string; name: string; token?: string }
-  | { t: 'settings'; mode?: ModeId; map?: MapId; size?: MapSize; slots?: Slot['kind'][] }
+  | { t: 'settings'; mode?: ModeId; map?: MapId; size?: MapSize; slots?: Slot['kind'][]; listed?: boolean }
+  /** Send me the list of open public games, and again whenever it changes. */
+  | { t: 'watch' }
   | { t: 'sit'; slot: number }
   | { t: 'start' }
   | { t: 'cmd'; c: Command }
@@ -81,4 +100,6 @@ export type ServerMsg =
   | { t: 'snapReq' }
   /** You fell out of step (or rejoined): load this, then play these turns. */
   | { t: 'snap'; n: number; data: string; turns: Turn[] }
+  /** Open public games, newest first. */
+  | { t: 'games'; games: GameInfo[] }
   | { t: 'error'; msg: string };

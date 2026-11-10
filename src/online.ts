@@ -1,9 +1,9 @@
 import type { Game, OnlineOptions } from './game';
 import { MODES, type ModeId } from './modes';
 import { Connection, relayUrl } from './net/client';
-import { MAX_TEAMS, type Lobby, type ServerMsg, type Slot } from './net/protocol';
+import { MAX_TEAMS, type GameInfo, type Lobby, type ServerMsg, type Slot } from './net/protocol';
 import { platform } from './platform';
-import type { MapId, MapSize } from './sim/maps';
+import { MAPS, SIZES, type MapId, type MapSize } from './sim/maps';
 import { teamDefs } from './sim/world';
 import { mapPicker } from './ui/mapPicker';
 
@@ -82,6 +82,15 @@ export class Online {
   /** Reconnecting after losing the server, so a refusal means the game is gone. */
   private rejoining = false;
   private menuTapAt = 0;
+  /** A second connection while the home screen is up, just for the list of open games. */
+  private browse: Connection | null = null;
+  private browseOpening = false;
+  /** Bumped whenever browsing stops, so a connection that opens afterwards closes itself. */
+  private browseId = 0;
+  private browseTries = 0;
+  private browseFailed = false;
+  /** Open games, or null until the server has sent the list. */
+  private games: GameInfo[] | null = null;
 
   constructor(private readonly host: OnlineHost) {}
 
@@ -107,7 +116,7 @@ export class Online {
     m.hidden = false;
     m.innerHTML = `<div class="menu-card online">
       <div class="tuts-h"><button data-back title="Back">←</button><h2>🌐 Play online</h2></div>
-      <p class="tag">Play with friends: one of you makes a game and shares the code.</p>
+      <p class="tag">Make a game and share its code, or join an open one.</p>
       <label class="field"><span>Your name</span><input data-name maxlength="16" placeholder="Player" value="${esc(this.name)}" autocomplete="nickname"></label>
       <button class="big-btn good" data-create>✨ Make a game</button>
       <div class="join-row">
@@ -115,6 +124,7 @@ export class Online {
         <button class="big-btn" data-join>Join</button>
       </div>
       <p class="err" ${this.error ? '' : 'hidden'}>${esc(this.error)}</p>
+      <div class="open-games"><h3>Open games</h3><div data-games></div></div>
     </div>`;
     this.error = '';
     const nameIn = m.querySelector<HTMLInputElement>('[data-name]')!;
@@ -124,7 +134,14 @@ export class Online {
       platform.storage.setItem(NAME_KEY, n);
       return n;
     };
-    m.querySelector('[data-back]')!.addEventListener('click', () => this.host.back());
+    m.querySelector('[data-back]')!.addEventListener('click', () => {
+      this.stopBrowsing();
+      this.host.back();
+    });
+    m.querySelector('[data-games]')!.addEventListener('click', (e) => {
+      const game = (e.target as HTMLElement).closest<HTMLElement>('[data-game]')?.dataset.game;
+      if (game) void this.connect({ t: 'join', code: game, name: name() });
+    });
     m.querySelector('[data-create]')!.addEventListener('click', () => void this.connect({ t: 'create', name: name() }));
     const join = (): void => {
       const c = codeIn.value.trim().toUpperCase();
@@ -138,6 +155,89 @@ export class Online {
     codeIn.addEventListener('input', () => (codeIn.value = codeIn.value.toUpperCase().replace(/[^A-Z]/g, '')));
     codeIn.addEventListener('keydown', (e) => e.key === 'Enter' && join());
     (code ? codeIn : nameIn).focus();
+    this.renderGames();
+    this.startBrowsing();
+  }
+
+  // ───────────────────────────── open games ─────────────────────────────
+
+  private onHome(): boolean {
+    return !this.host.menu.hidden && !!this.host.menu.querySelector('[data-games]');
+  }
+
+  private startBrowsing(): void {
+    const url = relayUrl();
+    if (!url || this.browse || this.browseOpening || !this.onHome()) return;
+    const id = this.browseId;
+    this.browseOpening = true;
+    Connection.open(url).then(
+      (c) => {
+        this.browseOpening = false;
+        if (id !== this.browseId || !this.onHome()) {
+          c.close();
+          return;
+        }
+        this.browse = c;
+        this.browseTries = 0;
+        this.browseFailed = false;
+        c.onMsg = (m) => {
+          if (m.t !== 'games') return;
+          this.games = m.games;
+          this.renderGames();
+        };
+        c.onClose = () => {
+          this.browse = null;
+          this.retryBrowsing();
+        };
+        c.send({ t: 'watch' });
+      },
+      () => {
+        this.browseOpening = false;
+        if (id === this.browseId) this.retryBrowsing();
+      },
+    );
+  }
+
+  private retryBrowsing(): void {
+    if (!this.onHome()) return;
+    if (this.browseTries >= 3) {
+      this.browseFailed = true;
+      this.renderGames();
+      return;
+    }
+    this.browseTries++;
+    setTimeout(() => this.startBrowsing(), 2000 * this.browseTries);
+  }
+
+  private stopBrowsing(): void {
+    this.browseId++;
+    this.browseOpening = false;
+    this.browse?.close();
+    this.browse = null;
+    this.browseTries = 0;
+  }
+
+  private renderGames(): void {
+    const box = this.host.menu.querySelector<HTMLElement>('[data-games]');
+    if (!box) return;
+    const games = this.games;
+    if (this.browseFailed) box.innerHTML = '<p class="note">Couldn’t reach the game server to list games.</p>';
+    else if (!games) box.innerHTML = '<p class="note">Looking for games…</p>';
+    else if (!games.length) box.innerHTML = '<p class="note">No open games right now. Make one and it shows up here for everyone.</p>';
+    else
+      box.innerHTML = games
+        .map((g) => {
+          const where = [
+            `${g.mode === 'pro' ? '🖥️' : '📱'} ${MODES[g.mode]?.label ?? ''}`,
+            `${MAPS[g.map]?.icon ?? ''} ${MAPS[g.map]?.label ?? ''}`,
+            SIZES[g.size]?.label ?? '',
+          ].join(' · ');
+          return `<button data-game="${esc(g.code)}" title="Join ${esc(g.host)}’s game">
+            <span class="t"><b>${esc(g.host)}’s game</b><span>${esc(where)}</span></span>
+            <span class="seats" title="People in it, out of the teams open for people">👤 ${g.players}/${g.players + g.free}</span>
+            <span class="go">Join</span></button>`;
+        })
+        .join('');
   }
 
   private showBusy(text: string): void {
@@ -151,6 +251,7 @@ export class Online {
   ): Promise<void> {
     const url = relayUrl();
     if (!url) return;
+    this.stopBrowsing();
     if (!quiet) this.showBusy('Connecting…');
     try {
       this.conn?.close();
@@ -314,7 +415,7 @@ export class Online {
 
   // ───────────────────────────── lobby ─────────────────────────────
 
-  private settings(change: { mode?: ModeId; map?: MapId; size?: MapSize; slots?: Slot['kind'][] }): void {
+  private settings(change: { mode?: ModeId; map?: MapId; size?: MapSize; slots?: Slot['kind'][]; listed?: boolean }): void {
     this.conn?.send({ t: 'settings', ...change });
   }
 
@@ -348,11 +449,16 @@ export class Online {
       })
       .join('');
     const share = inFrame ? l.code : `${location.origin}${location.pathname}?room=${l.code}`;
+    const listed = l.listed !== false;
+    const vis = (on: boolean): string =>
+      `<button data-listed="${on ? 1 : 0}" class="${listed === on ? 'on' : ''}" ${host ? '' : 'disabled'}>${on ? '🌍 Public' : '🔒 Private'}</button>`;
     const mode = (id: ModeId): string =>
       `<button data-mode="${id}" class="${l.mode === id ? 'on' : ''}" ${host ? '' : 'disabled'}>${id === 'casual' ? '📱' : '🖥️'} ${MODES[id].label}</button>`;
     m.innerHTML = `<div class="menu-card online lobby">
       <div class="tuts-h"><button data-leave title="Leave">←</button><h2>🌐 Online game</h2></div>
       <div class="code-row"><span>Code</span><b class="code">${l.code}</b><button data-copy>📋 Copy ${inFrame ? 'code' : 'invite link'}</button></div>
+      <div class="seg mode-seg">${vis(true)}${vis(false)}</div>
+      <p class="note vis-note">${listed ? 'Anyone can see this game in the open games list and join it.' : 'Hidden from the list: only people with the code can join.'}</p>
       <div class="seg mode-seg">${mode('casual')}${mode('pro')}</div>
       ${l.mode === 'pro' ? '<p class="note">Pro needs a keyboard and mouse. Pick Casual if anyone is on a phone.</p>' : ''}
       ${mapPicker(l.map ?? 'meadow', l.size ?? 'medium', host)}
@@ -373,6 +479,9 @@ export class Online {
       else if (inFrame) btn.textContent = 'Tell friends the code';
       else window.prompt('Send this link to your friends:', share);
     });
+    m.querySelectorAll<HTMLButtonElement>('[data-listed]').forEach((b) =>
+      b.addEventListener('click', () => this.settings({ listed: b.dataset.listed === '1' })),
+    );
     m.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
       b.addEventListener('click', () => this.settings({ mode: b.dataset.mode as ModeId })),
     );

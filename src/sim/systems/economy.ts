@@ -28,7 +28,9 @@ export function economy(w: World, dt: number): void {
   }
   for (const f of w.factions) {
     if (f.isNeutral) continue;
-    f.gold += gold[f.id] * dt * (1 + 0.25 * f.levels.market) * w.mode.incomeMult;
+    const income = gold[f.id] * dt * (1 + 0.25 * f.levels.market) * w.mode.incomeMult;
+    f.gold += income;
+    f.earned += income;
     f.research += res[f.id] * dt * (1 + 0.35 * f.levels.lab) * (1 + 0.05 * f.levels.school);
     while (f.tech < MAX_TECH && f.research >= techThreshold(f.tech + 1)) {
       f.tech++;

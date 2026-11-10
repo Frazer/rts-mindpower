@@ -120,6 +120,8 @@ export interface Faction {
   aiTimer: number;
   policeTimer: number;
   gold: number;
+  /** All the gold it has earned, before spending (gifts not counted). */
+  earned: number;
   research: number;
   tech: number;
   /** 0..1, multiplies how persuasive members are. Violence lowers it. */
@@ -179,6 +181,8 @@ export type Command =
   | { type: 'order'; faction: number; ids: number[]; order: OrderCommand; x?: number; y?: number; target?: number; building?: number }
   | { type: 'build'; faction: number; kind: BuildingKind; x: number; y: number }
   | { type: 'upgrade'; faction: number; building: number }
+  /** Every building of this kind goes up a level, lowest first, as far as the gold goes. */
+  | { type: 'upgradeAll'; faction: number; kind: BuildingKind }
   | { type: 'autoBefriend'; faction: number; target: number; count?: number }
   | { type: 'befriendArea'; faction: number; ids: number[]; x: number; y: number; r: number; target?: number }
   | { type: 'job'; faction: number; ids: number[]; job: Job }

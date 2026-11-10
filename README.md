@@ -23,15 +23,18 @@ npm run video      # gameplay preview videos in art/videos/ (needs Google Chrome
 | Teach | select yours, **Teach**, tap a teammate | right-click a teammate, or **C** then click |
 | Take over a building | select yours, tap a rival building | right-click a rival building, or **U** then click |
 | Find your best blobs | **👥 Team** | **Tab** |
-| Pick a group | **Select nearby**, or Team → Select top 5 | drag a box |
+| Pick a group | double-tap one of yours (or **Select nearby**) to pick the blobs around it, or Team → Select top 5 | drag a box, or double-click one of yours to pick the blobs around it |
 | Bonk (violence) | **Bonk** button | **X** then click / right-click |
 | Build | tap a button, tap your land | **Q W E R T Y** (Shift keeps placing) |
+| Level up buildings | tap one, **Level up**; double-tap one (or **Select all**) to level up every one of that kind | click one, **V**; double-click one to pick every one of that kind, then **V** |
 | Camera | drag, pinch | wheel zoom, right-drag pan, arrows, minimap, **H** home |
 | Other | 🔊 mute button | **S** stop, **G** move, Space pause, +/- speed, **M** mute |
 
 The menu only offers Pro on devices with a mouse or trackpad, or once a key has been pressed. Phones and tablets get Casual only (`?mode=pro` still forces it, for testing).
 
-You win by leading 90% of all blobs. When the game ends you can close the results and pan around the map.
+You win by leading 90% of all blobs. When the game ends, charts show how every team's blobs, income, buildings and tech went over the game; you can close the results and pan around the map.
+
+**Online:** 🌐 Play online lists the public games waiting for players; tap one to join, or make a game and share its code. The host can switch a game to private, so only people with the code can join.
 
 ## Tutorials
 

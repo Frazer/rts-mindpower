@@ -27,6 +27,8 @@ type Drag = 'none' | 'pan' | 'box' | 'pinch';
 const BUILD_HOTKEYS: Record<string, BuildingKind> = { q: 'house', w: 'school', e: 'lab', r: 'market', t: 'police', y: 'fountain' };
 /** Radius of the crowd a group befriend aims at. */
 const AREA_R = 150;
+/** "Around this blob": Select nearby and a double tap pick your blobs this close. */
+const NEAR = 260;
 /** Rewarded ad: gold you get, and game-seconds before the next offer. */
 const GIFT_GOLD = 75;
 const GIFT_FIRST = 45;
@@ -78,7 +80,13 @@ const BURSTS = {
 
 export class Game {
   private selected = new Set<number>();
-  private selBuilding: number | null = null;
+  private pickedBuilding: number | null = null;
+  /** Every one of your buildings of this kind is picked (selBuilding is the one you started from). */
+  private selKind: BuildingKind | null = null;
+  /** Last tap on one of your buildings, to spot a double tap. */
+  private lastBuildingTap = { id: -1, at: 0 };
+  /** Last tap on one of your blobs, to spot a double tap (it may have walked a little since). */
+  private lastBlobTap = { id: -1, x: 0, y: 0, at: 0 };
   private buildMode: BuildingKind | null = null;
   private command: CommandMode = null;
   /** The player switched on the buildings view (it also comes on by itself when aiming at buildings). */
@@ -340,7 +348,8 @@ export class Game {
       this.r.setGhost(null);
     }
 
-    this.r.render(alpha, now, dt, this.selected, this.selBuilding, this.buildMode ? this.me : -1, this.buildingsOnly);
+    const group = this.pickedGroup();
+    this.r.render(alpha, now, dt, this.selected, this.selBuilding, this.buildMode ? this.me : -1, this.buildingsOnly, group ? new Set(group.map((b) => b.id)) : null);
     if (this.tut) {
       const pts = this.tut.done ? [] : this.tut.points(w, this.ownSelected());
       this.hud.points(pts.map((p) => ({ ...this.r.camera.toScreen(p.x, p.y), label: p.label })));
@@ -489,6 +498,7 @@ export class Game {
     return {
       selected: blobs,
       building,
+      group: this.pickedGroup(),
       buildMode: this.buildMode,
       command: this.command,
       buildingView: this.buildingView,
@@ -637,6 +647,35 @@ export class Game {
 
   // ───────────────────────────── actions ─────────────────────────────
 
+  private get selBuilding(): number | null {
+    return this.pickedBuilding;
+  }
+
+  /** Picking a building, or none, drops a pick of all of a kind. */
+  private set selBuilding(id: number | null) {
+    this.pickedBuilding = id;
+    this.selKind = null;
+  }
+
+  /** Your buildings of the picked kind, or null when there's no such pick. */
+  private pickedGroup(): Building[] | null {
+    if (!this.selKind) return null;
+    const list = this.world.buildings.filter((b) => b.faction === this.me && b.kind === this.selKind);
+    if (!list.length) {
+      this.selBuilding = null;
+      return null;
+    }
+    return list;
+  }
+
+  private selectKind(b: Building): void {
+    this.selected.clear();
+    this.team = null;
+    this.selBuilding = b.id;
+    this.selKind = b.kind;
+    sound.play('select');
+  }
+
   private ownSelected(): Blob[] {
     return [...this.selected]
       .map((id) => this.world.byId.get(id))
@@ -688,24 +727,26 @@ export class Game {
         this.order('stop');
         return;
       case 'upgrade':
-        this.levelUp();
+        if (this.selKind) this.levelUpAll();
+        else this.levelUp();
         return;
+      case 'upgradeAll':
+        this.levelUpAll();
+        return;
+      case 'selectKind': {
+        const b = this.world.buildings.find((x) => x.id === this.selBuilding);
+        if (b && b.faction === this.me) this.selectKind(b);
+        return;
+      }
       case 'sendFriend':
         if (other) this.send({ type: 'autoBefriend', faction: this.me, target: other.id, count: 3 });
         return;
       case 'sendUsurp':
         if (this.selBuilding !== null) this.send({ type: 'autoUsurp', faction: this.me, building: this.selBuilding, count: 5 });
         return;
-      case 'nearby': {
-        const b = own[0];
-        if (!b) return;
-        const near = this.world.blobs.filter(
-          (x) => this.world.commandable(x, this.me) && x.age >= ADULT_AGE && (x.x - b.x) ** 2 + (x.y - b.y) ** 2 < 260 * 260,
-        );
-        this.selected = new Set(near.map((x) => x.id));
-        this.hud.say(`👥 Selected ${near.length} blobs. ${this.mode.boxSelect ? 'Now right-click a crowd of strangers.' : 'Now tap a stranger to befriend their crowd.'}`, 'info');
+      case 'nearby':
+        if (own[0]) this.selectNear(own[0]);
         return;
-      }
       case 'sendBonker':
         if (other) {
           this.violenceWarning();
@@ -726,6 +767,28 @@ export class Game {
       return;
     }
     this.send({ type: 'upgrade', faction: this.me, building: b.id });
+  }
+
+  private levelUpAll(): void {
+    const kind = this.selKind;
+    if (!kind) return;
+    const d = BUILDINGS[kind];
+    const plan = this.world.levelAllPlan(this.me, kind);
+    if (!plan.todo.length) {
+      this.hud.say(`${d.icon} They're all at the top level.`, 'info');
+      return;
+    }
+    const gold = Math.floor(this.world.factions[this.me].gold);
+    if (plan.can === 0) {
+      const first = upgradeCost(this.world.factions[this.me], plan.todo[0]);
+      this.hud.say(`${d.icon} The cheapest level up needs ${first} gold (you have ${gold}). Gold builds up over time.`, 'info');
+      sound.play('error');
+      return;
+    }
+    this.send({ type: 'upgradeAll', faction: this.me, kind });
+    if (plan.can < plan.todo.length) {
+      this.hud.say(`⬆️ Levelling up ${plan.can} of ${plan.todo.length}, the lowest first. The rest need ${plan.total - plan.canCost} more gold.`, 'info');
+    }
   }
 
   private violenceWarning(): void {
@@ -767,6 +830,20 @@ export class Game {
     if (tab) this.tut?.did.add('team');
     this.buildMode = null;
     this.command = null;
+  }
+
+  /** Pick your free grown-up blobs around this one (and it). */
+  private selectNear(b: Blob, add = false): void {
+    const near = this.world.blobs.filter(
+      (x) => x === b || (this.world.commandable(x, this.me) && x.age >= ADULT_AGE && (x.x - b.x) ** 2 + (x.y - b.y) ** 2 < NEAR * NEAR),
+    );
+    this.selected = new Set([...(add ? this.selected : []), ...near.map((x) => x.id)]);
+    this.selBuilding = null;
+    this.team = null;
+    this.hud.say(
+      `👥 Selected ${this.selected.size} blobs. ${this.mode.boxSelect ? 'Now right-click a crowd of strangers.' : 'Now tap a stranger to befriend their crowd.'}`,
+      'info',
+    );
   }
 
   private teamPick(id: number): void {
@@ -1079,6 +1156,19 @@ export class Game {
       this.selBuilding = null;
       this.team = null;
       sound.play('select');
+      // Double tap one of yours: pick the blobs around it too.
+      const now = performance.now();
+      const last = this.lastBlobTap;
+      const again =
+        blob.faction === this.me &&
+        now - last.at < 400 &&
+        (last.id === blob.id || Math.hypot(x - last.x, y - last.y) < 24 / this.r.camera.zoom);
+      this.lastBlobTap = { id: blob.faction === this.me ? blob.id : -1, x, y, at: now };
+      if (again) {
+        this.lastBlobTap.at = 0;
+        this.selectNear(blob, shift);
+        return;
+      }
       if (shift && blob.faction === this.me) {
         if (this.selected.has(blob.id)) this.selected.delete(blob.id);
         else this.selected.add(blob.id);
@@ -1089,6 +1179,14 @@ export class Game {
     }
     // In the buildings view, missing a building shouldn't lose the blobs you picked.
     if (this.buildingView && !bld && own.length) return;
+    // Double tap one of yours: pick every building of that kind.
+    const now = performance.now();
+    const again = bld && bld.faction === this.me && this.lastBuildingTap.id === bld.id && now - this.lastBuildingTap.at < 400;
+    this.lastBuildingTap = { id: bld && bld.faction === this.me ? bld.id : -1, at: now };
+    if (bld && again) {
+      this.selectKind(bld);
+      return;
+    }
     this.selected.clear();
     this.selBuilding = bld ? bld.id : null;
     if (bld) this.team = null;

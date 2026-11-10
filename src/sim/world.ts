@@ -144,6 +144,19 @@ export interface WorldOptions {
   mapSize?: MapSize;
 }
 
+/** Each team's totals as the game went on, for the charts at the end. */
+export interface History {
+  /** Game seconds between rows. When a game runs long this doubles and every other row goes, so it stays small. */
+  every: number;
+  /** Each row is the time, then HISTORY_FIELDS numbers per team (team 0, the wild blobs, first). */
+  rows: number[][];
+}
+
+/** Per team in each history row: blobs, gold earned so far, total building levels, tech level. */
+export const HISTORY_FIELDS = 4;
+const HISTORY_EVERY = 5;
+const HISTORY_ROWS = 240;
+
 /** Everything a running game needs to carry on, for catching up a player who fell out of step. */
 interface Snapshot {
   time: number;
@@ -157,6 +170,7 @@ interface Snapshot {
   townTimer: number;
   neutralCap: number;
   outcome: Outcome | null;
+  history: History;
 }
 
 // JSON can't hold -0, Infinity or NaN; tag them so a snapshot loads back bit for bit.
@@ -204,6 +218,7 @@ export class World {
   buildingsVersion = 0;
   neutralCap = 0;
   outcome: Outcome | null = null;
+  history: History = { every: HISTORY_EVERY, rows: [] };
   private events: SimEvent[] = [];
   private cmds: Command[] = [];
   private nextId = 1;
@@ -242,6 +257,7 @@ export class World {
       this.setup();
     }
     this.refreshCounts();
+    this.record();
     this.events = []; // setup noise (initial town halls) isn't news
   }
 
@@ -260,6 +276,7 @@ export class World {
         aiTimer: 2 + i,
         policeTimer: 0,
         gold: d.neutral ? 0 : this.mode.startGold,
+        earned: 0,
         research: 0,
         tech: 0,
         reputation: 0.65,
@@ -468,6 +485,26 @@ export class World {
       this.victoryTimer = 1;
       this.checkVictory();
     }
+    const last = this.history.rows.at(-1)?.[0] ?? -Infinity;
+    if (this.outcome || this.time >= last + this.history.every - 1e-6) this.record();
+  }
+
+  /** Add a row to the history. */
+  private record(): void {
+    this.refreshCounts();
+    const h = this.history;
+    const row = [this.time];
+    for (const f of this.factions) {
+      let levels = 0;
+      for (const k in f.levels) levels += f.levels[k as BuildingKind];
+      row.push(f.pop, f.earned, levels, f.tech);
+    }
+    h.rows.push(row);
+    if (h.rows.length > HISTORY_ROWS) {
+      // An odd count, so the newest row stays.
+      h.rows = h.rows.filter((_, i) => i % 2 === 0);
+      h.every *= 2;
+    }
   }
 
   drainEvents(): SimEvent[] {
@@ -587,6 +624,7 @@ export class World {
       townTimer: this.townTimer,
       neutralCap: this.neutralCap,
       outcome: this.outcome,
+      history: this.history,
     };
     return JSON.stringify(s, saveNum);
   }
@@ -607,6 +645,7 @@ export class World {
     this.townTimer = s.townTimer;
     this.neutralCap = s.neutralCap;
     this.outcome = s.outcome;
+    this.history = s.history ?? { every: HISTORY_EVERY, rows: [] };
     this.cmds.length = 0;
     this.events = [];
     this.buildingsVersion++;
@@ -637,6 +676,15 @@ export class World {
         f.gold -= cost;
         b.level++;
         this.emit('upgrade', b.x, b.y, { faction: c.faction, target: b.id, text: `${BUILDINGS[b.kind].label} to level ${b.level}` });
+        return;
+      }
+      case 'upgradeAll': {
+        const plan = this.levelAllPlan(c.faction, c.kind);
+        for (const b of plan.todo.slice(0, plan.can)) {
+          f.gold -= upgradeCost(f, b);
+          b.level++;
+          this.emit('upgrade', b.x, b.y, { faction: c.faction, target: b.id, text: `${BUILDINGS[b.kind].label} to level ${b.level}` });
+        }
         return;
       }
       case 'order': {
@@ -826,6 +874,30 @@ export class World {
       }
     }
     this.emit('usurp', bld.x, bld.y, { faction: to, other: from, target: bld.id, text: BUILDINGS[bld.kind].label });
+  }
+
+  /**
+   * "Level up all" for a team's buildings of one kind: the ones below max level, lowest first
+   * (they cost least, so the gold goes furthest), what raising them all costs, and how many
+   * of them (from the front) the team can pay for now.
+   */
+  levelAllPlan(faction: number, kind: BuildingKind): { todo: Building[]; total: number; can: number; canCost: number } {
+    const f = this.factions[faction];
+    const todo = this.buildings
+      .filter((b) => b.faction === faction && b.kind === kind && b.level < MAX_LEVEL)
+      .sort((a, b) => a.level - b.level || a.id - b.id);
+    let total = 0;
+    let can = 0;
+    let canCost = 0;
+    todo.forEach((b, i) => {
+      const cost = upgradeCost(f, b);
+      total += cost;
+      if (can === i && f.gold >= canCost + cost) {
+        can++;
+        canCost += cost;
+      }
+    });
+    return { todo, total, can, canCost };
   }
 
   commandable(b: Blob, faction: number): boolean {

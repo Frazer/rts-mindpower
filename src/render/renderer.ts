@@ -158,6 +158,8 @@ export class GameRenderer {
     selectedBuilding: number | null,
     highlightTerritoryOf: number,
     fadeBlobs: boolean,
+    /** All of one kind picked: a ring round each. */
+    group: ReadonlySet<number> | null = null,
   ): void {
     const w = this.world;
     this.camera.resize(this.app.screen.width, this.app.screen.height);
@@ -168,8 +170,8 @@ export class GameRenderer {
     this.fxLayer.alpha = this.blobLayer.alpha;
 
     this.drawTerritory(highlightTerritoryOf);
-    this.syncBuildings(now, selectedBuilding);
-    this.drawRanges(selectedBuilding);
+    this.syncBuildings(now, selectedBuilding, group);
+    this.drawRanges(selectedBuilding, group);
 
     const v = this.camera.view();
     const m = 60;
@@ -242,9 +244,17 @@ export class GameRenderer {
     }
   }
 
-  private drawRanges(selectedBuilding: number | null): void {
+  private drawRanges(selectedBuilding: number | null, group: ReadonlySet<number> | null): void {
     const g = this.ranges;
     g.clear();
+    if (group) {
+      for (const b of this.world.buildings) {
+        if (!group.has(b.id)) continue;
+        const r = BUILDINGS[b.kind].radius * (1 + 0.05 * (b.level - 1));
+        g.ellipse(b.x, b.y + r * 0.62, r * 1.45, r * 0.55).stroke({ width: 3, color: 0xffffff, alpha: 0.95 });
+      }
+      return;
+    }
     if (selectedBuilding === null) return;
     const b = this.world.buildings.find((x) => x.id === selectedBuilding);
     if (!b) return;
@@ -256,7 +266,7 @@ export class GameRenderer {
     }
   }
 
-  private syncBuildings(now: number, selected: number | null): void {
+  private syncBuildings(now: number, selected: number | null, group: ReadonlySet<number> | null): void {
     for (const b of this.world.buildings) {
       let v = this.bviews.get(b.id);
       if (v && v.faction !== b.faction) {
@@ -274,7 +284,7 @@ export class GameRenderer {
         this.bviews.set(b.id, v);
       }
       if (v.level !== b.level) this.drawLevel(v, b);
-      v.root.scale.set((selected === b.id ? 1.08 : 1) * (1 + 0.05 * (b.level - 1)));
+      v.root.scale.set((selected === b.id || group?.has(b.id) ? 1.08 : 1) * (1 + 0.05 * (b.level - 1)));
       if (v.light) v.light.tint = Math.floor(now / 400) % 2 === 0 ? 0xff4d4d : 0x4d7bff;
     }
   }

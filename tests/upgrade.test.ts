@@ -164,4 +164,59 @@ describe('levelling up buildings', () => {
     const rivals = w.buildings.filter((b) => b.faction !== PLAYER && b.faction !== 0);
     expect(rivals.some((b) => b.level > 1)).toBe(true);
   });
+  describe('level up all of a kind', () => {
+    const levelAll = (w: World, kind: BuildingKind, faction = PLAYER): void => {
+      w.command({ type: 'upgradeAll', faction, kind });
+      w.tick(DT);
+      w.drainEvents();
+    };
+
+    it('raises every one a level and charges what each would cost alone', () => {
+      const w = town();
+      const a = build(w, 'market');
+      const b = build(w, 'market');
+      const c = build(w, 'market');
+      levelUp(w, b);
+      const f = w.factions[PLAYER];
+      const plan = w.levelAllPlan(PLAYER, 'market');
+      expect(plan.todo.map((x) => x.id)).toEqual([a.id, c.id, b.id]);
+      expect(plan.total).toBe(upgradeCost(f, a) + upgradeCost(f, b) + upgradeCost(f, c));
+      expect(plan.can).toBe(3);
+      f.gold = plan.total;
+      levelAll(w, 'market');
+      expect([a.level, b.level, c.level]).toEqual([2, 3, 2]);
+      expect(f.gold).toBeLessThan(5); // Only a tick of income left.
+    });
+
+    it('with too little gold, does the lowest ones it can pay for', () => {
+      const w = town();
+      const a = build(w, 'school');
+      const b = build(w, 'school');
+      levelUp(w, a);
+      const f = w.factions[PLAYER];
+      f.gold = upgradeCost(f, b) + upgradeCost(f, a) - 1;
+      const plan = w.levelAllPlan(PLAYER, 'school');
+      expect(plan.can).toBe(1);
+      levelAll(w, 'school');
+      expect([a.level, b.level]).toEqual([2, 2]);
+    });
+
+    it('skips max level buildings and other teams', () => {
+      const w = town();
+      const a = build(w, 'house');
+      const b = build(w, 'house');
+      while (a.level < MAX_LEVEL) levelUp(w, a);
+      const theirs = w.buildings.find((x) => x.faction !== PLAYER && x.faction !== 0)!;
+      const was = theirs.level;
+      levelAll(w, 'house');
+      expect(a.level).toBe(MAX_LEVEL);
+      expect(b.level).toBe(2);
+      levelAll(w, theirs.kind);
+      expect(theirs.level).toBe(was);
+      // Nonsense from the network does nothing.
+      w.command({ type: 'upgradeAll', faction: PLAYER, kind: 'castle' as BuildingKind });
+      w.tick(DT);
+      expect(b.level).toBe(2);
+    });
+  });
 });

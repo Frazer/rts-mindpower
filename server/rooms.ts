@@ -10,7 +10,7 @@
  * (`npm run dev`, `npm run relay`) and worker.ts into Cloudflare.
  */
 import { MODES, type ModeId } from '../src/modes.ts';
-import { MAX_TEAMS, SILENT_SEC, TURN_SEC, type ClientMsg, type Lobby, type ServerMsg, type Slot, type Turn } from '../src/net/protocol.ts';
+import { MAX_TEAMS, SILENT_SEC, TURN_SEC, type ClientMsg, type GameInfo, type Lobby, type ServerMsg, type Slot, type Turn } from '../src/net/protocol.ts';
 import { DT } from '../src/sim/config.ts';
 import { isMapId, isMapSize, type MapId, type MapSize } from '../src/sim/maps.ts';
 import type { Command } from '../src/sim/types.ts';
@@ -48,6 +48,10 @@ export const MAX_MESSAGE = 16 * 1024 * 1024;
 const EMPTY_MS = 120_000;
 /** Every turn stays in memory for rejoins, and all rooms share one server, so a game can't run for ever. */
 const MAX_TURNS = (3 * 60 * 60) / TURN_SEC;
+/** Most games the list of open games shows. */
+const MAX_LISTED = 20;
+/** Messages that can change which games are open, or how they look in the list. */
+const LIST_CHANGES = new Set<ClientMsg['t']>(['create', 'join', 'settings', 'sit', 'start', 'rematch', 'leave']);
 
 interface Match {
   seed: number;
@@ -75,6 +79,8 @@ interface Room {
   players: Player[];
   match: Match | null;
   emptySince: number;
+  /** In the list of open games. */
+  listed: boolean;
 }
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -97,7 +103,22 @@ function lobbyOf(r: Room): Lobby {
     slots: r.slots.map((s) => ({ ...s })),
     players: r.players.map((p) => ({ id: p.id, name: p.name, connected: !!p.sock })),
     playing: !!r.match,
+    listed: r.listed,
   };
+}
+
+/** Public games someone could join right now, newest first. */
+function openGames(rooms: Map<string, Room>): GameInfo[] {
+  const out: GameInfo[] = [];
+  for (const r of [...rooms.values()].reverse()) {
+    if (!r.listed || r.match || r.players.length >= MAX_TEAMS) continue;
+    const host = r.players.find((p) => p.id === r.host);
+    const free = r.slots.filter((s) => s.kind === 'open' && s.player === null).length;
+    if (!host?.sock || free === 0) continue;
+    out.push({ code: r.code, host: host.name, mode: r.mode, map: r.map, size: r.size, players: connected(r).length, free, teams: r.slots.length });
+    if (out.length >= MAX_LISTED) break;
+  }
+  return out;
 }
 
 function broadcastLobby(r: Room): void {
@@ -231,15 +252,43 @@ function checkHash(r: Room, player: number, n: number, h: number): void {
 export function createRelay(): Relay {
   const rooms = new Map<string, Room>();
   const sessions = new Set<Session>();
+  /** People looking at the list of open games. */
+  const watchers = new Set<Session>();
+  let lastList = '';
+  let listTimer: ReturnType<typeof setTimeout> | undefined;
   let nextPlayer = 1;
   let sweeper: ReturnType<typeof setInterval> | undefined;
+
+  /** Tell everyone looking at the list about changes, a moment later so a burst of them goes as one. */
+  function listChanged(): void {
+    if (watchers.size === 0 || listTimer !== undefined) return;
+    listTimer = setTimeout(() => {
+      listTimer = undefined;
+      const text = JSON.stringify({ t: 'games', games: openGames(rooms) } satisfies ServerMsg);
+      if (text === lastList) return;
+      lastList = text;
+      for (const s of watchers) s.sock.send(text);
+    }, 300);
+  }
+
+  function unwatch(s: Session): void {
+    watchers.delete(s);
+    // Whatever was sent last went to nobody still here: a newcomer's list comes from 'watch'.
+    if (watchers.size === 0) lastList = '';
+  }
 
   function onMessage(s: Session, m: ClientMsg): void {
     const p = s.player;
     const r = p.room;
     switch (m.t) {
+      case 'watch':
+        if (r) return;
+        watchers.add(s);
+        s.sock.send(JSON.stringify({ t: 'games', games: openGames(rooms) } satisfies ServerMsg));
+        return;
       case 'create': {
         if (r) return;
+        unwatch(s);
         p.name = cleanName(m.name);
         const room: Room = {
           code: newCode(rooms),
@@ -255,6 +304,7 @@ export function createRelay(): Relay {
           players: [p],
           match: null,
           emptySince: 0,
+          listed: true,
         };
         rooms.set(room.code, room);
         p.room = room;
@@ -263,6 +313,7 @@ export function createRelay(): Relay {
       }
       case 'join': {
         if (r) return;
+        unwatch(s);
         const room = rooms.get(String(m.code ?? '').toUpperCase().trim());
         if (!room) return send(p, { t: 'error', msg: 'No game with that code.' });
         const back = m.token ? room.players.find((x) => x.token === m.token) : undefined;
@@ -320,6 +371,7 @@ export function createRelay(): Relay {
         if (m.mode === 'casual' || m.mode === 'pro') r.mode = m.mode;
         if (isMapId(m.map)) r.map = m.map;
         if (isMapSize(m.size)) r.size = m.size;
+        if (typeof m.listed === 'boolean') r.listed = m.listed;
         if (Array.isArray(m.slots)) {
           const kinds = m.slots.slice(0, MAX_TEAMS).map((k) => (k === 'ai' ? 'ai' : 'open') as Slot['kind']);
           if (kinds.length >= 2) {
@@ -452,10 +504,12 @@ export function createRelay(): Relay {
         for (const p of r.players) p.sock?.close();
       }
     }
+    listChanged();
     keepSweeping();
   }
 
   function closed(s: Session): void {
+    unwatch(s);
     if (!sessions.delete(s)) return;
     const p = s.player;
     if (p.sock === s.sock) {
@@ -470,6 +524,7 @@ export function createRelay(): Relay {
       } else if (r) {
         leave(r, p);
       }
+      listChanged();
     }
     keepSweeping();
   }
@@ -491,7 +546,9 @@ export function createRelay(): Relay {
       } catch {
         return;
       }
-      if (m && typeof m === 'object' && typeof m.t === 'string') onMessage(s, m);
+      if (!m || typeof m !== 'object' || typeof m.t !== 'string') return;
+      onMessage(s, m);
+      if (LIST_CHANGES.has(m.t)) listChanged();
     },
     closed,
   };

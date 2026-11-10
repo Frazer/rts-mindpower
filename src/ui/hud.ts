@@ -19,6 +19,7 @@ import { NEGATIVE_TRAITS, SKILL_MAX, TRAITS, TRAIT_INFO, gradeOf, skillShare, ta
 import type { Blob, Building, BuildingKind, Job } from '../sim/types';
 import type { World } from '../sim/world';
 import type { Progress } from '../tutorials';
+import { endCharts } from './endChart';
 
 export type PanelAction =
   | 'befriend'
@@ -28,6 +29,8 @@ export type PanelAction =
   | 'move'
   | 'stop'
   | 'upgrade'
+  | 'upgradeAll'
+  | 'selectKind'
   | 'nearby'
   | 'sendFriend'
   | 'sendBonker'
@@ -115,6 +118,8 @@ export interface TutDone {
 export interface HudState {
   selected: Blob[];
   building: Building | null;
+  /** All your buildings of one kind, when you've picked them together. */
+  group: Building[] | null;
   buildMode: BuildingKind | null;
   command: CommandMode;
   buildingView: boolean;
@@ -131,6 +136,8 @@ const MOOD: Record<Blob['mood'], string> = { calm: '🙂', happy: '😄', angry:
 const CASUAL_FOCUS: TraitKey[] = ['science', 'kindness', 'teaching', 'honesty', 'finance'];
 
 const hex = (c: number): string => '#' + c.toString(16).padStart(6, '0');
+const plural = (label: string): string => `${label}${label.endsWith('s') ? 'es' : 's'}`;
+const stars = (level: number): string => `${'★'.repeat(level)}${'☆'.repeat(MAX_LEVEL - level)}`;
 const pct = (v: number): string => `${Math.round(v * 100)}%`;
 const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -353,11 +360,13 @@ export class Hud {
   private renderPanel(w: World, s: HudState): void {
     const out = s.team
       ? this.teamPanel(w, s.team)
-      : s.building
-        ? this.buildingPanel(w, s.building)
-        : s.selected.length
-          ? this.blobPanel(w, s)
-          : null;
+      : s.group
+        ? this.groupPanel(w, s.group)
+        : s.building
+          ? this.buildingPanel(w, s.building)
+          : s.selected.length
+            ? this.blobPanel(w, s)
+            : null;
     if (!out) {
       if (!this.panel.hidden) {
         this.panel.hidden = true;
@@ -463,7 +472,7 @@ export class Hud {
         <button data-a="attack" class="danger ${on('attack')}" title="Fast, but police arrest attackers">💥 Bonk${kbd('X')}</button>
         <button data-a="move" class="${on('move')}">🚶 Move${kbd('G')}</button>
         <button data-a="stop">✋ Stop${kbd('S')}</button>
-        ${blobs.length === 1 ? `<button data-a="nearby" title="Select your free blobs around this one">👥 Select nearby</button>` : ''}
+        ${blobs.length === 1 ? `<button data-a="nearby" title="Select your free blobs around this one${this.mode.boxSelect ? ' (or double-click it)' : ' (or double-tap it)'}">👥 Select nearby</button>` : ''}
       </div>
       <div class="jobs"><span class="jl">Job</span>${(Object.keys(JOBS) as Job[])
         .map((k) => `<button data-job="${k}" class="${job === k ? 'on' : ''}" title="${JOBS[k].desc}">${JOBS[k].icon} ${JOBS[k].label}</button>`)
@@ -561,6 +570,12 @@ export class Hud {
             : ''
       }</div>`;
     if (canLevel) body += `<p class="note dim">Next level: ${def.nextLevel}. Harder to take over.</p>`;
+    const many = own ? f.counts[b.kind] : 0;
+    if (many > 1) {
+      body += `<div class="acts"><button data-a="selectKind" title="Pick all your ${esc(plural(def.label))} to level them up together${
+        this.mode.boxSelect ? ' (or double-click one)' : ' (or double-tap one)'
+      }">👆 Select all ${many} ${esc(plural(def.label))}</button></div>`;
+    }
     if (b.capture > 0 && b.captureBy >= 0) {
       const by = w.factions[b.captureBy];
       body += `<div class="meter capture" title="Outnumber the blobs standing here to take it over"><span>🏳️ ${
@@ -609,6 +624,38 @@ export class Hud {
       f.id === this.me ? 'Yours' : f.name,
     )}</span></div>${body}`;
     return { key: `bld|${b.id}|${b.focus}|${b.faction}|${b.captureBy}|${b.capture > 0}|${b.level}|${poor}`, html, vals, widths };
+  }
+
+  /** All your buildings of one kind, picked together to level them up at once. */
+  private groupPanel(w: World, list: Building[]): PanelOut {
+    const kind = list[0].kind;
+    const def = BUILDINGS[kind];
+    const plan = w.levelAllPlan(this.me, kind);
+    const vals: Record<string, string> = { total: `${plan.total}`, part: `${plan.canCost}` };
+    const byLevel = new Map<number, number>();
+    for (const b of list) byLevel.set(b.level, (byLevel.get(b.level) ?? 0) + 1);
+    const levels = [...byLevel.entries()]
+      .sort((a, b) => b[0] - a[0])
+      .map(([lv, n]) => `<li><span class="stars" title="Level ${lv} of ${MAX_LEVEL}">${stars(lv)}</span><b>×${n}</b></li>`)
+      .join('');
+    const n = plan.todo.length;
+    const poor = n > 0 && plan.can < n;
+    const act =
+      n === 0
+        ? '<span class="tag">All at max level</span>'
+        : `<button data-a="upgradeAll" class="${plan.can === 0 ? 'poor' : ''}" title="Each one goes up a level, lowest first">⬆️ Level up ${
+            n === list.length ? 'all' : `the ${n} below max`
+          } <i class="coin"></i><b data-v="total"></b>${this.mode.hotkeys ? '<kbd>V</kbd>' : ''}</button>`;
+    const html = `<div class="p-head"><span class="ico">${def.icon}</span><b>Your ${esc(plural(def.label))}</b><span class="tag">${list.length}</span></div>
+      <ul class="lv-list">${levels}</ul>
+      <div class="level">${act}</div>
+      ${
+        poor && plan.can > 0
+          ? `<p class="note">You can pay for ${plan.can} of them now (<i class="coin"></i><b data-v="part"></b>): the lowest go first.</p>`
+          : ''
+      }
+      ${n > 0 ? `<p class="note dim">Each level: ${esc(def.nextLevel)}. Higher levels cost more.</p>` : ''}`;
+    return { key: `grp|${kind}|${list.map((b) => `${b.id}:${b.level}`).join(',')}|${plan.can}`, html, vals, widths: {} };
   }
 
   // ───────────────────────────── messages ─────────────────────────────
@@ -925,6 +972,7 @@ export class Hud {
         <span>🔒 Jailed</span><b>${st.jailed}</b>
         <span>⏱️ Time</span><b>${mins}:${secs}</b>
       </div>
+      <div class="end-charts"></div>
       <div class="acts"><button data-look>🗺️ Look around</button><button data-restart class="good">Play again</button><button data-menu>Menu</button></div>
     </div>`;
     const card = this.endEl.querySelector<HTMLElement>('.card')!;
@@ -934,6 +982,7 @@ export class Hud {
       bar.hidden = on;
       this.endEl.classList.toggle('looking', !on);
     };
+    endCharts(card.querySelector<HTMLElement>('.end-charts')!, w, this.me);
     this.endEl.querySelectorAll('[data-restart]').forEach((b) => b.addEventListener('click', () => this.h.restart()));
     this.endEl.querySelectorAll('[data-menu]').forEach((b) => b.addEventListener('click', () => this.h.menu()));
     this.endEl.querySelector('[data-look]')!.addEventListener('click', () => showCard(false));

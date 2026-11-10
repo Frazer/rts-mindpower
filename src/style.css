@@ -1856,3 +1856,255 @@ kbd {
     white-space: nowrap;
   }
 }
+
+/* ───────────── open games list (online home screen) ───────────── */
+
+.open-games {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 2px solid #f0e9de;
+  text-align: left;
+}
+
+.open-games h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.open-games [data-games] {
+  display: grid;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.open-games .note {
+  margin: 0;
+}
+
+.open-games [data-game] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: #f7f3ec;
+  text-align: left;
+  transition: background 0.12s;
+}
+
+.open-games [data-game]:hover {
+  background: #eef7ff;
+}
+
+.open-games .t {
+  flex: 1;
+  display: grid;
+  min-width: 0;
+  font-size: 14px;
+}
+
+.open-games .t b,
+.open-games .t span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.open-games .t span {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.open-games .seats {
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.open-games .go {
+  flex: none;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: #dcf6e8;
+  box-shadow: inset 0 0 0 2px var(--good);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.online .vis-note {
+  margin: 6px 0 12px;
+}
+
+/* ───────────── end card charts ───────────── */
+
+.end .card {
+  width: min(94vw, 540px);
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.end .card .grid {
+  grid-template-columns: repeat(3, 1fr auto);
+  gap: 4px 12px;
+  font-size: 14px;
+}
+
+@media (max-width: 480px) {
+  .end .card {
+    padding: 18px 16px;
+  }
+
+  .end .card .grid {
+    grid-template-columns: repeat(2, 1fr auto);
+  }
+}
+
+.end-charts {
+  margin: 4px 0 14px;
+  text-align: left;
+}
+
+.chart-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  background: #f3eee6;
+}
+
+.chart-tabs button {
+  flex: 1;
+  padding: 7px 4px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.chart-tabs button.on {
+  background: var(--paper);
+  color: inherit;
+  box-shadow: inset 0 0 0 2px var(--blue);
+}
+
+.chart-sub {
+  margin: 8px 2px 2px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.chart-wrap {
+  position: relative;
+  touch-action: pan-y;
+}
+
+.chart-wrap svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: inherit;
+  cursor: crosshair;
+}
+
+.chart-tip {
+  position: absolute;
+  top: 6px;
+  min-width: 110px;
+  padding: 6px 9px;
+  border-radius: 10px;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.chart-tip .when {
+  color: var(--ink-soft);
+  margin-bottom: 2px;
+}
+
+.chart-tip div:not(.when) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.chart-tip i,
+.chart-legend i {
+  flex: none;
+  width: 12px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.chart-tip b {
+  min-width: 2.2em;
+}
+
+.chart-tip span {
+  color: var(--ink-soft);
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin-top: 6px;
+}
+
+.chart-legend button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #f7f3ec;
+  font-size: 12px;
+  transition: opacity 0.12s;
+}
+
+.chart-legend button.on {
+  box-shadow: inset 0 0 0 2px var(--ink);
+}
+
+.chart-legend button.dim {
+  opacity: 0.5;
+}
+
+.chart-legend span {
+  max-width: 11em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ───────────── all of one building kind picked ───────────── */
+
+.lv-list {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.lv-list li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 14px;
+}
+
+.lv-list .stars {
+  color: #f0a500;
+  font-size: 15px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}

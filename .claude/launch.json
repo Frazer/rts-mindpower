@@ -50,6 +50,18 @@
         "--strictPort"
       ],
       "port": 5175
+    },
+    {
+      "name": "mind-blobs-built",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "preview",
+        "--port",
+        "4174",
+        "--strictPort"
+      ],
+      "port": 4174
     }
   ]
 }

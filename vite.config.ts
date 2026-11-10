@@ -23,5 +23,10 @@ export default defineConfig(({ mode }) => ({
     outDir: PORTALS.includes(mode) ? `dist-${mode}` : 'dist',
     // Every file next to index.html, no assets/ folder: some portal uploaders take loose files only.
     assetsDir: '',
+    // One script, no chunks loaded later: a new upload deletes the old build's files, and a page
+    // that was already open would fail to start a game if it still needed one of them.
+    rolldownOptions: { output: { codeSplitting: false } },
+    // About 215 kB gzipped, nearly all of it PixiJS.
+    chunkSizeWarningLimit: 800,
   },
 }));

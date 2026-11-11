@@ -15,6 +15,8 @@ export function ai(w: World, dt: number): void {
     aiBuild(w, f);
     aiUpgrade(w, f);
     aiJobs(w, f);
+    // A head start: in Casual, new players get the first minute to find their feet.
+    if (w.time < w.mode.aiGrace) continue;
     aiDiplomacy(w, f);
     aiAggression(w, f);
     aiUsurp(w, f);

@@ -62,6 +62,20 @@
         "--strictPort"
       ],
       "port": 4174
+    },
+    {
+      "name": "mind-blobs-crazygames-built",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "preview",
+        "--outDir",
+        "dist-crazygames",
+        "--port",
+        "4176",
+        "--strictPort"
+      ],
+      "port": 4176
     }
   ]
 }

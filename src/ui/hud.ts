@@ -19,6 +19,7 @@ import { NEGATIVE_TRAITS, SKILL_MAX, TRAITS, TRAIT_INFO, gradeOf, skillShare, ta
 import type { Blob, Building, BuildingKind, Job } from '../sim/types';
 import type { World } from '../sim/world';
 import type { Progress } from '../tutorials';
+import type { Feature } from '../unlocks';
 import { endCharts } from './endChart';
 
 export type PanelAction =
@@ -32,6 +33,7 @@ export type PanelAction =
   | 'upgradeAll'
   | 'selectKind'
   | 'nearby'
+  | 'deselect'
   | 'sendFriend'
   | 'sendBonker'
   | 'sendUsurp';
@@ -129,6 +131,8 @@ export interface HudState {
   muted: boolean;
   /** Rewarded-ad offer: null when there are no ads (or in tutorials), else whether it's ready now. */
   gift: { ready: boolean; gold: number } | null;
+  /** Buttons a new Casual player hasn't met yet. */
+  hide: ReadonlySet<Feature>;
 }
 
 const BUILD_KEYS: Record<string, string> = { house: 'Q', school: 'W', lab: 'E', market: 'R', police: 'T', fountain: 'Y' };
@@ -359,7 +363,7 @@ export class Hud {
 
   private renderPanel(w: World, s: HudState): void {
     const out = s.team
-      ? this.teamPanel(w, s.team)
+      ? this.teamPanel(w, s.team, s.hide)
       : s.group
         ? this.groupPanel(w, s.group)
         : s.building
@@ -421,6 +425,9 @@ export class Hud {
       vals.status = [busy || !students ? `${busy} busy` : '', students ? `${students} studying 🎒` : ''].filter(Boolean).join(' · ');
     }
 
+    // Casual: taps on the map give orders, so letting go needs its own button.
+    if (own && !this.mode.boxSelect) head += `<button class="x" data-a="deselect" title="Let go of ${blobs.length > 1 ? 'these blobs' : 'this blob'}">✕</button>`;
+
     const avg = (fn: (x: Blob) => number): number => blobs.reduce((a, x) => a + fn(x), 0) / blobs.length;
     widths.loy = avg((x) => x.loyalty);
     widths.hp = avg((x) => x.health);
@@ -465,19 +472,25 @@ export class Hud {
       const jobs = new Set(blobs.filter((x) => x.role !== 'police').map((x) => x.job));
       const job = jobs.size === 1 ? [...jobs][0] : null;
       jobKey = job ?? 'mixed';
+      const has = (f: Feature): boolean => !s.hide.has(f);
+      const btn = (f: Feature | null, html: string): string => (f === null || has(f) ? html : '');
       actions = `<div class="acts">
         <button data-a="befriend" class="good ${on('befriend')}" title="Tap a stranger or a crowd: your blobs spread out and befriend them all">💗 Befriend${kbd('F')}</button>
         <button data-a="teach" class="teach ${on('teach')}" title="Pass this blob's best traits to a teammate">📚 Teach${kbd('C')}</button>
-        <button data-a="usurp" class="${on('usurp')}" title="Take over another team's building by outnumbering the blobs there">🏳️ Take over${kbd('U')}</button>
-        <button data-a="attack" class="danger ${on('attack')}" title="Fast, but police arrest attackers">💥 Bonk${kbd('X')}</button>
+        ${btn('usurp', `<button data-a="usurp" class="${on('usurp')}" title="Take over another team's building by outnumbering the blobs there">🏳️ Take over${kbd('U')}</button>`)}
+        ${btn('attack', `<button data-a="attack" class="danger ${on('attack')}" title="Fast, but police arrest attackers">💥 Bonk${kbd('X')}</button>`)}
         <button data-a="move" class="${on('move')}">🚶 Move${kbd('G')}</button>
-        <button data-a="stop">✋ Stop${kbd('S')}</button>
-        ${blobs.length === 1 ? `<button data-a="nearby" title="Select your free blobs around this one${this.mode.boxSelect ? ' (or double-click it)' : ' (or double-tap it)'}">👥 Select nearby</button>` : ''}
+        ${btn('stop', `<button data-a="stop">✋ Stop${kbd('S')}</button>`)}
+        ${blobs.length === 1 ? btn('nearby', `<button data-a="nearby" title="Select your free blobs around this one${this.mode.boxSelect ? ' (or double-click it)' : ' (or double-tap it)'}">👥 Select nearby</button>`) : ''}
       </div>
-      <div class="jobs"><span class="jl">Job</span>${(Object.keys(JOBS) as Job[])
-        .map((k) => `<button data-job="${k}" class="${job === k ? 'on' : ''}" title="${JOBS[k].desc}">${JOBS[k].icon} ${JOBS[k].label}</button>`)
-        .join('')}</div>
-      <p class="note dim">${job ? JOBS[job].desc : 'Mixed jobs. Pick one to give them all the same job.'}</p>`;
+      ${
+        has('jobs')
+          ? `<div class="jobs"><span class="jl">Job</span>${(Object.keys(JOBS) as Job[])
+              .map((k) => `<button data-job="${k}" class="${job === k ? 'on' : ''}" title="${JOBS[k].desc}">${JOBS[k].icon} ${JOBS[k].label}</button>`)
+              .join('')}</div>
+      <p class="note dim">${job ? JOBS[job].desc : 'Mixed jobs. Pick one to give them all the same job.'}</p>`
+          : `<p class="note dim">${blobs.length === 1 ? 'Tap a grey stranger to send this blob to make friends.' : 'Tap a grey stranger to send them all to make friends.'} More buttons appear as you play.</p>`
+      }`;
     } else if (own && b.role === 'police') {
       actions = `<p class="note">🚓 Officers patrol your land and arrest anyone who turns violent — even your own blobs.</p>`;
     } else if (!own) {
@@ -498,12 +511,14 @@ export class Hud {
       traitKey,
       jobKey,
       b.job,
+      [...s.hide].join(','),
     ].join('|');
-    const html = `<div class="p-head">${head}</div><div class="p-sub">${sub}</div>${meters}${traits}${actions}`;
+    // What you can do first, then what the blob is like.
+    const html = `<div class="p-head">${head}</div><div class="p-sub">${sub}</div>${actions ? `<div class="p-acts">${actions}</div>` : ''}${meters}${traits}`;
     return { key, html, vals, widths };
   }
 
-  private teamPanel(w: World, tab: TeamTab): PanelOut {
+  private teamPanel(w: World, tab: TeamTab, hide: ReadonlySet<Feature>): PanelOut {
     const def = TEAM_TABS.find((t) => t.key === tab) ?? TEAM_TABS[0];
     const mine = w.blobs.filter((b) => b.alive && b.faction === this.me && b.role !== 'police');
     // Re-rank every couple of seconds so rows don't jump around under your finger.
@@ -547,8 +562,8 @@ export class Hud {
       <p class="note dim">${def.desc}</p>
       <div class="acts">${actBtn.select}</div>
       <div class="roster">${rows || '<p class="note">No blobs yet.</p>'}</div>
-      ${def.act ? `<div class="acts">${actBtn[def.act]}</div>` : ''}`;
-    return { key: `team|${tab}|${shown.join(',')}`, html, vals, widths };
+      ${def.act && (def.act === 'teachThem' || !hide.has('jobs')) ? `<div class="acts">${actBtn[def.act]}</div>` : ''}`;
+    return { key: `team|${tab}|${shown.join(',')}|${hide.size}`, html, vals, widths };
   }
 
   private buildingPanel(w: World, b: Building): PanelOut {

@@ -20,6 +20,8 @@ Rival towns are after the same strangers. The Peachy Pals are friendly. The Grum
 
 Every blob has 13 traits, like charm, kindness, honesty, strength and patience. Each one changes how it acts, what it can teach and who it can convince.
 
+Pick a map (Meadow, Lakes, Woods or Crowded Middle), a size, and 1 to 6 rival towns. Level your buildings up to level 5, one at a time or all of a kind at once. When the game ends, charts show how every team grew: blobs, income, buildings and tech.
+
 - **Casual mode:** a relaxed pace, played with taps, made for phones and tablets.
 - **Pro mode:** faster, with hotkeys, box select, control groups and every stat on show.
 - **Tutorials:** short levels in each mode, each teaching one or two ideas.
@@ -29,12 +31,14 @@ Every blob has 13 traits, like charm, kindness, honesty, strength and patience. 
 **Casual (touch or mouse)**
 - Tap one of your blue blobs to select it, then tap a stranger to befriend their crowd.
 - Tap a rival building to take it over.
-- Tap a building button, then tap your land to build.
+- Double-tap one of your blobs to pick the blobs around it.
+- Tap a building button, then tap your land to build. Tap one of your buildings to level it up; double-tap it to level up all of that kind.
 - 👥 Team finds your best blobs. Drag to move the camera, and pinch to zoom.
 
 **Pro (keyboard and mouse)**
 - Click or drag a box to select. Right-click a stranger to befriend, a teammate to teach, or a rival building to take it over.
-- Q W E R T Y build. Ctrl+1–9 sets a group and 1–9 picks it. Tab opens your team.
+- Double-click one of your blobs to pick the blobs around it.
+- Q W E R T Y build. V levels up the picked building; double-click one to pick all of that kind. Ctrl+1–9 sets a group and 1–9 picks it. Tab opens your team.
 - Use the mouse wheel to zoom, right-drag or the arrow keys to pan, and H to jump home.
 - Space pauses, + and − change speed, and M mutes.
 

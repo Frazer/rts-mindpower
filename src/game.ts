@@ -1,6 +1,8 @@
 import { sound } from './audio';
+import { Coach, coached, markCoached } from './coach';
 import type { ModeConfig } from './modes';
 import { platform } from './platform';
+import { completed } from './progress';
 import { GameRenderer } from './render/renderer';
 import { Lockstep } from './net/lockstep';
 import type { ClientMsg, Setup, Turn } from './net/protocol';
@@ -10,8 +12,9 @@ import { lessonValue } from './sim/systems/jobs';
 import type { Blob, Building, BuildingKind, Command, Job, OrderCommand, SimEvent } from './sim/types';
 import type { MapId, MapSize } from './sim/maps';
 import { World } from './sim/world';
-import { TutorialRun, say, type Level } from './tutorials';
+import { TutorialRun, levelsFor, say, type Level } from './tutorials';
 import { Hud, JOBS, type CommandMode, type PanelAction, type TeamAct, type TeamTab } from './ui/hud';
+import { ALL_FEATURES, nextUnlock, unlock, unlocked, type Feature } from './unlocks';
 
 interface PointerInfo {
   x: number;
@@ -27,6 +30,9 @@ type Drag = 'none' | 'pan' | 'box' | 'pinch';
 const BUILD_HOTKEYS: Record<string, BuildingKind> = { q: 'house', w: 'school', e: 'lab', r: 'market', t: 'police', y: 'fountain' };
 /** Radius of the crowd a group befriend aims at. */
 const AREA_R = 150;
+/** Casual: a tap this close to a stranger (CSS px) counts as tapping them, since they wander. */
+const MISS_PX = 70;
+const NO_FEATURES: ReadonlySet<Feature> = new Set();
 /** "Around this blob": Select nearby and a double tap pick your blobs this close. */
 const NEAR = 260;
 /** Rewarded ad: gold you get, and game-seconds before the next offer. */
@@ -121,6 +127,13 @@ export class Game {
   private readonly net: { opts: OnlineOptions; ls: Lockstep } | null;
   /** Told the player their last blob is gone (online, where the game goes on without them). */
   private toldOut = false;
+  /** A new player's first game: points out their first befriend, step by step. */
+  private coach: Coach | null = null;
+  private coachStep = -1;
+  /** You've won someone over this game (brings in the first new buttons). */
+  private madeFriend = false;
+  /** Space out the "new button" messages. */
+  private nextIntroAt = 0;
 
   private constructor(
     private readonly mode: ModeConfig,
@@ -204,6 +217,13 @@ export class Game {
       this.hud.setTutorial(!!this.tut.level.victory, this.tut.level.build ?? []);
       this.hud.tutorial(this.tutCard());
       this.frameView(this.tut.level.view);
+      return;
+    }
+    // Finishing every Casual tutorial counts as having met every button.
+    if (this.mode.id === 'casual' && levelsFor('casual').every((l) => completed('casual').has(l.id))) unlock(ALL_FEATURES);
+    if (!coached()) {
+      this.coach = new Coach(this.me, this.mode.id);
+      this.updateCoach([], performance.now());
       return;
     }
     this.hud.say(
@@ -338,6 +358,7 @@ export class Game {
     this.r.fx(events);
     this.narrate(events);
     this.updateTutorial(events, now);
+    this.updateCoach(events, now);
 
     for (const id of this.selected) if (!w.byId.has(id)) this.selected.delete(id);
 
@@ -353,11 +374,15 @@ export class Game {
     if (this.tut) {
       const pts = this.tut.done ? [] : this.tut.points(w, this.ownSelected());
       this.hud.points(pts.map((p) => ({ ...this.r.camera.toScreen(p.x, p.y), label: p.label })));
+    } else if (this.coach) {
+      const pts = this.coach.points(w, this.ownSelected());
+      this.hud.points(pts.map((p) => ({ ...this.r.camera.toScreen(p.x, p.y), label: p.label })));
     }
 
     this.hudTimer -= dt;
     if (this.hudTimer <= 0) {
       this.hudTimer = 0.2;
+      this.checkUnlocks(now);
       this.hud.update(w, this.hudState());
       const [hint, sub] = this.hintText();
       this.hud.hint(hint, sub);
@@ -507,7 +532,68 @@ export class Game {
       team: this.team,
       muted: sound.isMuted,
       gift: this.giftState() === null ? null : { ready: this.giftState() === 0, gold: GIFT_GOLD },
+      hide: this.hiddenFeatures(),
     };
+  }
+
+  /** Buttons a new Casual player hasn't met yet (Pro and the tutorials show everything). */
+  private hiddenFeatures(): ReadonlySet<Feature> {
+    if (this.mode.id !== 'casual' || this.tut) return NO_FEATURES;
+    const have = unlocked();
+    return have.size === ALL_FEATURES.length ? NO_FEATURES : new Set(ALL_FEATURES.filter((f) => !have.has(f)));
+  }
+
+  /** Bring in the next few buttons once the player is ready for them, with a word on each. */
+  private checkUnlocks(now: number): void {
+    if (this.mode.id !== 'casual' || this.tut || this.coach || this.world.outcome || now < this.nextIntroAt) return;
+    const u = nextUnlock();
+    const f = this.world.factions[this.me];
+    if (!u || !u.ready({ time: this.world.time, madeFriend: this.madeFriend, hasSchool: f.counts.school > 0 })) return;
+    unlock(u.features);
+    this.hud.say(u.intro, 'good');
+    sound.play('step');
+    this.nextIntroAt = now + 8000;
+  }
+
+  private updateCoach(events: readonly SimEvent[], now: number): void {
+    const c = this.coach;
+    if (!c) return;
+    if (events.some((e) => e.type === 'convert' && e.faction === this.me)) {
+      this.coach = null;
+      markCoached();
+      this.hud.tutorial(null);
+      this.hud.points([]);
+      sound.play('step');
+      this.hud.say(`🎉 Your first new friend! Keep going: lead ${Math.round(this.mode.winShare * 100)}% of all the blobs to win.`, 'good');
+      this.nextIntroAt = now + 6000;
+      return;
+    }
+    const sel = this.ownSelected();
+    const n = c.step(this.world, sel);
+    if (n === this.coachStep) return;
+    const forward = n > this.coachStep;
+    this.coachStep = n;
+    this.hud.tutorial(c.card(this.world, sel));
+    if (n > 0 && forward) sound.play('step');
+    if (n === 1) this.showCoachTarget(sel);
+  }
+
+  /**
+   * If the strangers are hidden (off screen, or under the panel or the steps card), swing the
+   * camera: to show your blob and the strangers together if the clear part of the screen is
+   * big enough, else just the strangers.
+   */
+  private showCoachTarget(sel: readonly Blob[]): void {
+    const p = this.coach?.points(this.world, sel)[0];
+    if (!p) return;
+    const a = this.hud.freeArea();
+    const s = this.r.camera.toScreen(p.x, p.y);
+    if (s.x >= a.x0 + 40 && s.x <= a.x1 - 40 && s.y >= a.y0 + 40 && s.y <= a.y1 - 40) return;
+    const b = sel[0];
+    const z = this.r.camera.zoom;
+    const both = b && Math.abs(p.x - b.x) * z <= a.x1 - a.x0 - 80 && Math.abs(p.y - b.y) * z <= a.y1 - a.y0 - 60;
+    if (both) this.jumpTo((b.x + p.x) / 2, (b.y + p.y) / 2);
+    else this.jumpTo(p.x, p.y);
   }
 
   private hintText(): [string | null, string?] {
@@ -562,9 +648,12 @@ export class Game {
           if (e.faction === this.me) sound.play('befriend');
           else if (e.other === this.me) sound.play('lost');
           if (e.faction === this.me) {
+            this.madeFriend = true;
             this.hud.toast(`💗 ${e.text} joined you!`, 'good', BURSTS.joined);
-            if (!this.tut && this.once('tipTeach', Infinity)) {
+            // Not while the first-steps guide or a new button is having its say.
+            if (!this.tut && !this.coach && performance.now() >= this.nextIntroAt && this.once('tipTeach', Infinity)) {
               this.hud.say('📚 Tip: select a charming blob and press Teach to pass its best traits to a teammate.', 'info');
+              this.nextIntroAt = performance.now() + 8000;
             }
           }
           else if (e.other === this.me) this.hud.toast(`💔 ${e.text} was won over by ${name(e.faction)}`, 'bad', BURSTS.lost);
@@ -713,6 +802,10 @@ export class Game {
     const own = this.ownSelected();
     const other = [...this.selected].map((id) => this.world.byId.get(id)).find((b) => b && b.faction !== this.me);
     switch (a) {
+      case 'deselect':
+        this.selected.clear();
+        this.command = null;
+        return;
       case 'befriend':
       case 'attack':
       case 'teach':
@@ -1064,6 +1157,22 @@ export class Game {
     return best;
   }
 
+  /** The befriendable blob nearest a tap that just missed one. */
+  private strangerNear(x: number, y: number): Blob | null {
+    const r = Math.min(120, MISS_PX / this.r.camera.zoom);
+    let best: Blob | null = null;
+    let bd = r * r;
+    for (const b of this.world.blobs) {
+      if (!b.alive || b.faction === this.me || b.role === 'police' || b.jail > 0) continue;
+      const d = (b.x - x) ** 2 + (b.y - 6 - y) ** 2;
+      if (d < bd) {
+        bd = d;
+        best = b;
+      }
+    }
+    return best;
+  }
+
   private pickBuilding(x: number, y: number): Building | undefined {
     // When buildings are all you can click, the tap target can afford to be generous.
     return this.buildingsOnly ? this.r.buildingAt(x, y, Math.max(14, 26 / this.r.camera.zoom)) : this.r.buildingAt(x, y);
@@ -1179,6 +1288,19 @@ export class Game {
     }
     // In the buildings view, missing a building shouldn't lose the blobs you picked.
     if (this.buildingView && !bld && own.length) return;
+    // Casual, with your blobs picked: a tap just beside a wandering stranger still reaches
+    // their crowd, and a tap on open grass walks your blobs there. ✕ on the panel lets go.
+    if (!this.mode.boxSelect && own.length && !bld) {
+      const near = this.strangerNear(x, y);
+      if (near) {
+        this.befriendAt(x, y, near);
+      } else {
+        this.order('move', undefined, x, y);
+        this.r.pulse(x, y, 28, 0xffffff);
+        if (this.once('tipMove', Infinity)) this.hud.toast('🚶 Walking there. ✕ on the panel lets them go.', 'info');
+      }
+      return;
+    }
     // Double tap one of yours: pick every building of that kind.
     const now = performance.now();
     const again = bld && bld.faction === this.me && this.lastBuildingTap.id === bld.id && now - this.lastBuildingTap.at < 400;

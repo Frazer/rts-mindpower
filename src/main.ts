@@ -126,6 +126,9 @@ function showMenu(): void {
       <div class="logo"><span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span></div>
       <h1>Mind Blobs</h1>
       <p class="tag">Grow an empire by winning hearts, not fights.</p>
+      <div class="learn ${pro ? '' : 'single'}">
+        ${pro ? learnButton('casual', 'Casual tutorials') + learnButton('pro', 'Pro tutorials') : learnButton('casual', 'Tutorials')}
+      </div>
       <div class="modes ${pro ? '' : 'single'}">
         <button data-mode="casual" class="${rec('casual')}">
           <span class="ico">📱</span><b>${pro ? 'Casual' : 'BEGIN'}</b><small>Relaxed pace · tap to play · simple traits</small>
@@ -141,9 +144,6 @@ function showMenu(): void {
       ${rivalsPicker()}
       ${mapPicker(getMap().map, getMap().size)}
       ${onlineAvailable() ? '<button class="online-btn" data-online>🌐 Play online with friends</button>' : ''}
-      <div class="learn ${pro ? '' : 'single'}">
-        ${pro ? learnButton('casual', 'Casual tutorials') + learnButton('pro', 'Pro tutorials') : learnButton('casual', 'Tutorials')}
-      </div>
       ${pro ? '' : '<p class="pro-note">🖥️ Pro mode needs a keyboard and mouse. Play it on a computer.</p>'}
       <ul class="how">
         <li>💗 <b>Befriend</b> strangers: charming, kind, honest blobs win them over.</li>

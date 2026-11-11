@@ -174,6 +174,10 @@ interface Snapshot {
 }
 
 // JSON can't hold -0, Infinity or NaN; tag them so a snapshot loads back bit for bit.
+/** How far a town's own wanderer camp may sit from its hall, best first: just past its land (190) plus the camp's spread. */
+const HOME_CAMP = [320, 290, 260] as const;
+/** Nearest a town's own wanderers start to its hall. */
+const HOME_GAP = 230;
 const ODD = '~n';
 const saveNum = (_k: string, v: unknown): unknown =>
   typeof v === 'number' && (!Number.isFinite(v) || Object.is(v, -0)) ? { [ODD]: Object.is(v, -0) ? '-0' : String(v) } : v;
@@ -368,27 +372,74 @@ export class World {
       if (bestCop) bestCop.role = 'police';
     });
 
-    // Neutral wanderers live in camps away from the towns (or, on Crowded Middle, mostly in one big one).
+    // Every town gets a few wanderers of its own just past its land, toward the middle,
+    // so there's someone to befriend straight away.
+    const homes = this.homeCamps(halls);
+    const homeEach = Math.max(3, Math.round(this.neutralCap / 12));
+    let k = 0;
+    for (const c of homes) {
+      for (let i = 0; i < homeEach && k < this.neutralCap; i++, k++) {
+        const a = rng.range(0, Math.PI * 2);
+        const r = rng.range(0, c.spread);
+        this.spawnBlob(NEUTRAL, c.x + cos(a) * r, c.y + sin(a) * r, randomTraits(rng), rng.range(3, 60), c.x, c.y);
+      }
+    }
+
+    // The rest live in camps away from the towns (or, on Crowded Middle, mostly in one big one).
     const crowd = this.map === 'crowd';
     const camps: [number, number][] = crowd ? [[this.w / 2, this.h / 2]] : [];
-    const campCount = crowd ? 3 : Math.max(4, Math.round(this.neutralCap / 7));
+    const campCount = crowd ? 3 : Math.max(4, Math.round((this.neutralCap - k) / 7));
     for (let tries = 0; camps.length < campCount && tries < 500; tries++) {
       const x = rng.range(120, this.w - 120);
       const y = rng.range(120, this.h - 120);
       const farFromTowns = halls.every((h) => dist2(h.x, h.y, x, y) > 330 * 330);
-      const farFromCamps = camps.every(([cx, cy]) => dist2(cx, cy, x, y) > 220 * 220);
+      const farFromCamps = camps.every(([cx, cy]) => dist2(cx, cy, x, y) > 220 * 220) && homes.every((c) => dist2(c.x, c.y, x, y) > 200 * 200);
       const clear = !this.obstacleAt(x, y, 140);
       if (farFromTowns && farFromCamps && clear) camps.push([x, y]);
     }
     if (camps.length === 0) camps.push([this.w / 2, this.h / 2]);
-    for (let k = 0; k < this.neutralCap; k++) {
+    for (let n = 0; k < this.neutralCap; k++, n++) {
       // Crowded Middle: three in four wanderers live in the middle.
-      const mid = crowd && k % 4 !== 3;
-      const [cx, cy] = mid ? camps[0] : camps[k % camps.length];
+      const mid = crowd && n % 4 !== 3;
+      const [cx, cy] = mid ? camps[0] : camps[n % camps.length];
       const a = rng.range(0, Math.PI * 2);
       const r = rng.range(0, mid ? 230 : 110);
       this.spawnBlob(NEUTRAL, cx + cos(a) * r, cy + sin(a) * r, randomTraits(rng), rng.range(3, 60), cx, cy);
     }
+  }
+
+  /**
+   * A spot for each town's own little camp: toward the middle of the map, just past its land,
+   * and clearly nearer that town than any other. Closer in when the map is crowded; none if
+   * there's no room at all.
+   */
+  private homeCamps(halls: readonly Building[]): { x: number; y: number; spread: number }[] {
+    const rng = this.rng;
+    const out: { x: number; y: number; spread: number }[] = [];
+    for (const h of halls) {
+      // Toward the middle (sqrt, cos and sin only: every browser must agree to the bit).
+      const len = Math.sqrt(dist2(h.x, h.y, this.w / 2, this.h / 2)) || 1;
+      const ux = (this.w / 2 - h.x) / len;
+      const uy = (this.h / 2 - h.y) / len;
+      let found = false;
+      for (const d of HOME_CAMP) {
+        for (let tries = 0; tries < 16 && !found; tries++) {
+          const a = rng.range(-0.4, 0.4) * (1 + tries / 4);
+          const x = h.x + (ux * cos(a) - uy * sin(a)) * d;
+          const y = h.y + (uy * cos(a) + ux * sin(a)) * d;
+          const inside = x > 60 && x < this.w - 60 && y > 60 && y < this.h - 60;
+          const mine = halls.every((o) => o === h || (dist2(o.x, o.y, x, y) > (d + 60) ** 2 && dist2(o.x, o.y, x, y) > 300 ** 2));
+          const apart = out.every((c) => dist2(c.x, c.y, x, y) > 160 ** 2);
+          if (inside && mine && apart && !this.obstacleAt(x, y, 50)) {
+            // Wanderers stay out of the town's land (190) to begin with.
+            out.push({ x, y, spread: d - HOME_GAP });
+            found = true;
+          }
+        }
+        if (found) break;
+      }
+    }
+    return out;
   }
 
   spawnBlob(faction: number, x: number, y: number, traits: Traits, age: number, homeX: number, homeY: number): Blob {

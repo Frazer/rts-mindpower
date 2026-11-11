@@ -12,6 +12,8 @@ export interface ModeConfig {
   speeds: readonly number[];
   /** Seconds between AI decisions. */
   aiThink: number;
+  /** Seconds at the start before computer teams send anyone out (they still build). */
+  aiGrace: number;
   aiAggression: number;
   conversionMult: number;
   /** How many blob-years pass per game second (blobs live about 100 years). */
@@ -38,6 +40,7 @@ export const MODES: Record<ModeId, ModeConfig> = {
     defaultSpeed: 1,
     speeds: [1, 2],
     aiThink: 9,
+    aiGrace: 60,
     aiAggression: 0.4,
     conversionMult: 1.3,
     yearsPerSecond: 0.07,
@@ -60,6 +63,7 @@ export const MODES: Record<ModeId, ModeConfig> = {
     defaultSpeed: 1.5,
     speeds: [1, 1.5, 2, 3],
     aiThink: 3,
+    aiGrace: 0,
     aiAggression: 1,
     conversionMult: 1,
     yearsPerSecond: 0.1,

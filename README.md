@@ -19,7 +19,8 @@ npm run video      # gameplay preview videos in art/videos/ (needs Google Chrome
 | | Casual | Pro |
 |---|---|---|
 | Select | tap a blob | click, Shift+click, drag box, Ctrl+A, Ctrl+1–9 / 1–9 groups |
-| Befriend a crowd | select yours, tap a stranger (or **Befriend**, then tap a crowd) | right-click a stranger, or **F** then click |
+| Befriend a crowd | select yours, tap a stranger or just beside one (or **Befriend**, then tap a crowd) | right-click a stranger, or **F** then click |
+| Walk | select yours, tap open grass; **✕** on the panel lets go | right-click the ground, or **G** then click |
 | Teach | select yours, **Teach**, tap a teammate | right-click a teammate, or **C** then click |
 | Take over a building | select yours, tap a rival building | right-click a rival building, or **U** then click |
 | Find your best blobs | **👥 Team** | **Tab** |
@@ -31,6 +32,10 @@ npm run video      # gameplay preview videos in art/videos/ (needs Google Chrome
 | Other | 🔊 mute button | **S** stop, **G** move, Space pause, +/- speed, **M** mute |
 
 The menu only offers Pro on devices with a mouse or trackpad, or once a key has been pressed. Phones and tablets get Casual only (`?mode=pro` still forces it, for testing).
+
+**A new player's first game:** a "First steps" card and a bobbing label walk you through picking a blob and befriending the strangers camped just outside your town, until your first new friend joins. It shows once. In Casual, the computer teams also hold off for the first minute before they send anyone out, and every town starts with a few wanderers of its own nearby.
+
+**Buttons arrive as you play (Casual):** a blob's panel starts with 💗 Befriend, 📚 Teach and 🚶 Move. Select nearby and Stop come with your first new friend, then Take over, then jobs (or as soon as you build a school), then Bonk, each with a word on what it does. Once you've met a button it stays for every later game, and finishing every Casual tutorial brings them all in. Pro shows everything from the start.
 
 You win by leading 90% of all blobs. When the game ends, charts show how every team's blobs, income, buildings and tech went over the game; you can close the results and pan around the map.
 

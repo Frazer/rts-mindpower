@@ -110,10 +110,16 @@ describe('levelling up buildings', () => {
       const crowd = w.blobs.filter((b) => b.faction === rival.id && b.role === 'citizen').slice(0, 6);
       w.command({ type: 'order', faction: rival.id, ids: crowd.map((b) => b.id), order: 'usurp', building: market.id });
       let sec = 0;
+      // Only the level should matter: keep the attackers on the spot and the defenders away.
+      const home = w.blobs.filter((b) => b.faction === PLAYER);
       while (market.faction === PLAYER && sec < 900) {
         for (const b of crowd) {
           b.x = market.x + 20;
           b.y = market.y + 20;
+        }
+        for (const b of home) {
+          b.x = 20;
+          b.y = 20;
         }
         w.tick(DT);
         w.drainEvents();

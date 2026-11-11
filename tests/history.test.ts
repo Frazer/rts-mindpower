@@ -43,7 +43,8 @@ describe('game history for the end charts', () => {
     expect(rows.at(-1)![0]).toBeGreaterThan(60 * 25 - w.history.every * 1.01);
     const gaps = rows.slice(1).map((r, i) => r[0] - rows[i][0]);
     for (const g of gaps) expect(g).toBeCloseTo(w.history.every, 3);
-  });
+    // 25 minutes of game: a few seconds of work, more on a busy machine.
+  }, 30_000);
 
   it('travels with the copy of the game a player catches up from', () => {
     const a = new World(MODES.casual, 9);

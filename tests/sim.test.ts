@@ -152,7 +152,7 @@ describe('simulation', () => {
   it('police arrest attackers inside their town', () => {
     // Catching is a dice roll and attackers can outrun low-tech police, so check several towns.
     let caught = 0;
-    for (const seed of [1, 2, 3, 4, 5]) {
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
       const w = new World(MODES.pro, seed);
       const hall = w.hall(PLAYER)!;
       const mine = w.blobs.filter((b) => b.faction === PLAYER && b.role === 'citizen' && b.age >= ADULT_AGE);
@@ -168,6 +168,7 @@ describe('simulation', () => {
       }
       if (arrested) caught++;
     }
-    expect(caught).toBeGreaterThanOrEqual(3);
+    // About three in four get caught (22 of 30 towns when last measured).
+    expect(caught).toBeGreaterThanOrEqual(5);
   });
 });

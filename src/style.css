@@ -398,6 +398,17 @@ kbd {
   margin: 3px 0 8px;
 }
 
+/* A blob's buttons sit above its stats, set off by a line. */
+.p-acts {
+  margin: 8px 0 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgb(59 38 51 / 0.1);
+}
+
+.p-acts .note:last-child {
+  margin-bottom: 0;
+}
+
 .meters {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -616,6 +627,10 @@ kbd {
 }
 
 /* team panel */
+.p-head [data-v='mood'] + .x {
+  margin-left: 0;
+}
+
 .p-head .x {
   margin-left: auto;
   width: 28px;
@@ -1247,7 +1262,7 @@ kbd {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
-  margin-top: 10px;
+  margin-bottom: 12px;
 }
 
 .learn.single {

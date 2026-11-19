@@ -66,6 +66,7 @@ describe('rival teams', () => {
       console.table(w.factions.map((f) => ({ name: f.name, pop: f.pop, tech: f.tech, buildings: Object.values(f.counts).reduce((a, b) => a + b, 0) })));
       const built = w.factions.filter((f) => f.ai && Object.values(f.counts).reduce((a, b) => a + b, 0) > 1).length;
       expect(built).toBeGreaterThanOrEqual(MAX_RIVALS - 1);
-    });
+      // Ten sim-minutes with six AI towns: a few seconds here, longer on a CI runner.
+    }, 30_000);
   }
 });

@@ -62,7 +62,8 @@ describe('maps', () => {
         expect(worst).toBeLessThan(0);
         for (const b of w.buildings) expect(inside(w, b.x, b.y, BUILDINGS[b.kind].radius)).toBe(false);
         expect(w.buildings.length).toBeGreaterThan(w.factions.length);
-      });
+        // Five sim-minutes with up to six towns: slow on a CI runner.
+      }, 30_000);
     }
   }
 

@@ -11,6 +11,7 @@
     "package": "bash scripts/package.sh",
     "art": "bash scripts/art.sh",
     "video": "node scripts/video.mjs",
+    "video:short": "node scripts/short.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc --noEmit -p server && tsc --noEmit -p server/tsconfig.worker.json",
     "test": "vitest run",

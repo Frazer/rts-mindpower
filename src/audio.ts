@@ -25,10 +25,10 @@ export type SoundName =
   | 'coin';
 
 const MUTE_KEY = 'mindblobs.muted';
-const VOLUME = 0.5;
+export const VOLUME = 0.5;
 
 /** Shortest gap (seconds) between two plays of one sound, so busy moments don't turn into noise. */
-const GAP: Partial<Record<SoundName, number>> = {
+export const GAP: Partial<Record<SoundName, number>> = {
   tap: 0.04,
   select: 0.05,
   go: 0.08,
@@ -176,6 +176,14 @@ class SoundBoard {
     RECIPES[name](this.voice(c, this.master, now));
   }
 
+  /**
+   * Plays a sound into another audio context at time `at`, whatever the mute switch says.
+   * For recording a video's sound (scripts/short.mjs); the game itself uses play().
+   */
+  playInto(c: BaseAudioContext, out: AudioNode, name: SoundName, at: number): void {
+    RECIPES[name](this.voice(c, out, at));
+  }
+
   private audible(): boolean {
     return !this.isMuted && this.holds.size === 0;
   }
@@ -189,7 +197,7 @@ class SoundBoard {
     if (!on && c.state === 'running') void c.suspend().catch(() => {});
   }
 
-  private voice(c: AudioContext, out: AudioNode, t0: number): Voice {
+  private voice(c: BaseAudioContext, out: AudioNode, t0: number): Voice {
     return {
       tone: (type, f0, f1, at, dur, vol) => {
         const t = t0 + at;
@@ -222,7 +230,7 @@ class SoundBoard {
     };
   }
 
-  private noiseBuffer(c: AudioContext): AudioBuffer {
+  private noiseBuffer(c: BaseAudioContext): AudioBuffer {
     if (!this.noise) {
       this.noise = c.createBuffer(1, Math.floor(c.sampleRate * 0.5), c.sampleRate);
       const d = this.noise.getChannelData(0);

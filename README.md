@@ -12,6 +12,7 @@ npm run build      # type-check + production bundle in dist/
 npm run package    # every build (web, CrazyGames, Poki), zipped in release/ for upload
 npm run art        # portal covers and thumbnails, rendered to art/covers/ (needs Google Chrome)
 npm run video      # gameplay preview videos in art/videos/ (needs Google Chrome and ffmpeg)
+npm run video:short  # vertical Shorts/Reels clip with captions and sound: art/videos/short.mp4
 ```
 
 ## How it plays
@@ -185,5 +186,5 @@ The simulation never reads from the renderer. The UI sends `world.command(...)` 
 
 - Package for phones with **Capacitor** (iOS and Android) and for desktop with **Tauri**
 - Run the sim in a Web Worker for Pro-scale populations
-- Sound, building upgrades, more varied AI personalities, fog of war
+- Music and background sound (the sound effects are done), more varied AI personalities, fog of war
 - Balance pass from real play (`npm test -- --silent=false` prints faction tables)

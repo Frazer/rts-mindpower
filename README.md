@@ -4,6 +4,8 @@ A cartoon-blob real-time strategy game. You grow an empire mostly by **winning b
 
 Built with TypeScript, PixiJS v8 and Vite. There is one simulation with two tunings: **Casual** (mobile, relaxed) and **Pro** (PC, fast, every stat shown).
 
+**Play it free in your browser:** https://frazer.github.io/rts-mindpower/ (also on itch.io: https://neojex.itch.io/mind-blobs). Every push to `main` updates the GitHub Pages copy.
+
 ```bash
 npm install
 npm run dev        # http://localhost:5173  (?mode=casual|pro&seed=123 skips the menu, add &tut=hello for a tutorial)
